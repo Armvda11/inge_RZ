@@ -10,11 +10,25 @@ CONFIG = {
         'mid': 40000,
         'min': 20000
     },
-    'outdir': '../figures',
+    'outdir': '../data_logs',
     'failure': {
         'predictable_time': 50,  # Instant T où les nœuds prédictibles tombent en panne
         'predictable_nodes': 5,  # Nombre de nœuds prédictibles qui tombent en panne
-        'random_prob': 0.01     # Probabilité qu'un nœud tombe en panne à chaque pas de temps
+        'categories': {
+            'legere': {
+                'random_prob': 0.005,  # 0.5% de probabilité par pas de temps
+                'predictable_nodes': 3  # Nombre faible de nœuds prédictibles
+            },
+            'moyenne': {
+                'random_prob': 0.05,   # 1% de probabilité par pas de temps
+                'predictable_nodes': 30  # Nombre moyen de nœuds prédictibles
+            },
+            'lourde': {
+                'random_prob': 0.10,   # 2% de probabilité par pas de temps
+                'predictable_nodes': 50  # Nombre élevé de nœuds prédictibles
+            }
+        },
+        'active_category': 'moyenne'    # Catégorie par défaut
     },
     'analysis': {
         'window_size': 5,       # Taille de la fenêtre pour l'analyse temporelle
@@ -24,8 +38,11 @@ CONFIG = {
 
 # Paramètres de pannes de nœuds (pour accès facile)
 T_PRED = CONFIG['failure']['predictable_time']
-N_PRED = CONFIG['failure']['predictable_nodes']
-P_FAIL = CONFIG['failure']['random_prob']
+
+# Utiliser la catégorie active pour déterminer les paramètres de panne
+ACTIVE_CATEGORY = CONFIG['failure']['active_category']
+N_PRED = CONFIG['failure']['categories'][ACTIVE_CATEGORY]['predictable_nodes']
+P_FAIL = CONFIG['failure']['categories'][ACTIVE_CATEGORY]['random_prob']
 
 # Paramètres d'analyse (pour accès facile)
 WINDOW_SIZE = CONFIG['analysis']['window_size']

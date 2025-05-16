@@ -2,7 +2,8 @@
 import random
 import numpy as np
 from config import T_PRED, N_PRED, P_FAIL
-from simulation.metrics import get_importance, get_centrality
+import networkx as nx
+from simulation.metrics import get_importance, get_centrality, swarm_to_graph
 
 class NodeFailureManager:
     """Gestionnaire de pannes de nœuds.
@@ -27,14 +28,40 @@ class NodeFailureManager:
             matrix: Matrice pondérée (nécessaire pour 'importance')
             swarm: Swarm (nécessaire pour 'centralite')
         """
+        # Vérifier que les paramètres sont cohérents
+        if strategy == 'importance' and matrix is None:
+            print("ERREUR: La matrice est requise pour la stratégie 'importance'. Utilisation de la stratégie 'aléatoire'.")
+            strategy = 'aléatoire'
+        
+        if strategy == 'centralite' and swarm is None:
+            print("ERREUR: Le swarm est requis pour la stratégie 'centralite'. Utilisation de la stratégie 'aléatoire'.")
+            strategy = 'aléatoire'
+            
+        # S'assurer que num_nodes ne dépasse pas le nombre total de nœuds
+        total_nodes = len(self.positions[0])
+        if num_nodes > total_nodes // 2:
+            print(f"ATTENTION: Le nombre de nœuds à désactiver ({num_nodes}) est supérieur à 50% du total ({total_nodes}).")
+            print(f"Limitation à {total_nodes // 3} nœuds pour éviter une fragmentation excessive.")
+            num_nodes = max(1, total_nodes // 3)
+        
         # Sélection des nœuds selon la stratégie
+        selected_nodes = []
+        
         if strategy == 'importance' and matrix:
-            self.predictable_failures = set(get_importance(matrix, num_nodes))
+            selected_nodes = get_importance(matrix, num_nodes)
+            #print(f"  - Nœuds sélectionnés par importance: {selected_nodes}")
+            
         elif strategy == 'centralite' and swarm:
-            self.predictable_failures = set(get_centrality(swarm, num_nodes))
-        else:  # Par défaut, sélection aléatoire
-            all_node_ids = list(range(len(self.positions[0])))
-            self.predictable_failures = set(random.sample(all_node_ids, min(num_nodes, len(all_node_ids))))
+            selected_nodes = get_centrality(swarm, num_nodes)
+            #print(f"  - Nœuds sélectionnés par centralité: {selected_nodes}")
+            
+        else:  # Stratégie aléatoire
+            all_node_ids = list(range(total_nodes))
+            selected_nodes = random.sample(all_node_ids, min(num_nodes, total_nodes))
+           # print(f"  - Nœuds sélectionnés aléatoirement: {selected_nodes}")
+        
+        # Stocker les nœuds sélectionnés
+        self.predictable_failures = set(selected_nodes)
         
         # Enregistrer le moment prévu pour chaque panne
         for node_id in self.predictable_failures:
@@ -53,13 +80,36 @@ class NodeFailureManager:
                 if node_id in positions and positions[node_id].active:
                     positions[node_id].active = False
                     self.failed_nodes.add(node_id)
+                    self.failure_times[node_id] = t
+                    #print(f"  - Nœud {node_id} désactivé (panne prévisible)")
         
         # Appliquer pannes aléatoires avec probabilité p_fail
-        for node_id, node in positions.items():
-            if node.active and node_id not in self.predictable_failures and random.random() < P_FAIL:
-                node.active = False
-                self.failed_nodes.add(node_id)
-                self.failure_times[node_id] = t
+        # Seulement pour les nœuds qui ne sont pas déjà programmés pour une panne prévisible
+        active_nodes = [node_id for node_id, node in positions.items() 
+                      if node.active and node_id not in self.predictable_failures]
+        
+        # Utiliser P_FAIL comme probabilité mais limiter le nombre total de pannes par pas de temps
+        # pour éviter une cascade de pannes qui fragmenterait trop le réseau
+        max_failures_per_step = max(1, len(active_nodes) // 20)  # Au plus 5% des nœuds actifs
+        
+        # Tirage aléatoire pour déterminer quels nœuds tombent en panne
+        random_failures = []
+        for node_id in active_nodes:
+            if random.random() < P_FAIL and len(random_failures) < max_failures_per_step:
+                random_failures.append(node_id)
+        
+        # Appliquer les pannes aléatoires
+        for node_id in random_failures:
+            positions[node_id].active = False
+            self.failed_nodes.add(node_id)
+            self.failure_times[node_id] = t
+            #print(f"  - Nœud {node_id} désactivé (panne aléatoire à t={t})")
+            
+        # Afficher un résumé des pannes
+        if t % 10 == 0 or t == T_PRED:  # Tous les 10 pas de temps ou à T_PRED
+            active_count = sum(1 for node in positions.values() if node.active)
+            total_count = len(positions)
+           # print(f"  - t={t}: {active_count}/{total_count} nœuds actifs ({100*active_count/total_count:.1f}%)")
     
     def get_active_nodes(self, positions: dict):
         """Retourne uniquement les nœuds actifs.
@@ -110,8 +160,20 @@ def simulate_with_failures(positions, swarms, matrixes, adjacency, num_sats, des
     # Configurer les pannes selon le type
     if failure_type == 'predictable':
         # Pannes prévisibles à T_PRED
-        failure_mgr.setup_predictable_failures(T_PRED, N_PRED, 'importance', 
-                                             matrixes[best_t], swarms[best_t])
+        print(f"  - Configuration des pannes prévisibles (T={T_PRED}, N={N_PRED})")
+        # Utiliser la meilleure stratégie en alternant entre importance et centralité
+        # selon les caractéristiques du réseau à cet instant
+        best_graph = swarm_to_graph(swarms[best_t], matrixes[best_t])
+        
+        # Si le graphe est peu connexe, privilégier la centralité de degré
+        if nx.density(best_graph) < 0.3:
+            print("  - Utilisation de la stratégie 'centralité' (faible densité du réseau)")
+            failure_mgr.setup_predictable_failures(T_PRED, N_PRED, 'centralite', 
+                                               matrixes[best_t], swarms[best_t])
+        else:
+            print("  - Utilisation de la stratégie 'importance' (forte densité du réseau)")
+            failure_mgr.setup_predictable_failures(T_PRED, N_PRED, 'importance', 
+                                               matrixes[best_t], swarms[best_t])
     
     # Structures pour stocker les résultats
     local_swarms = {}
@@ -192,53 +254,47 @@ def simulate_with_failures(positions, swarms, matrixes, adjacency, num_sats, des
                 'protocol_instance': protocol  # Stocker l'instance du protocole pour accéder aux logs de paquets
             })
     
-    # Visualiser les résultats si demandé
-    if plot:
-        # Graphique d'évolution des métriques avec pannes
-        plt.figure(figsize=(10, 6))
-        ts = sorted(local_stats.keys())
-        plt.plot(ts, [local_stats[t].MeanDegree for t in ts], label='Degré moyen')
-        plt.plot(ts, [local_stats[t].MeanClusterCoef for t in ts], label='Clustering')
-        plt.plot(ts, [local_stats[t].Connexity for t in ts], label='Connexité')
-        plt.plot(ts, [local_stats[t].Efficiency for t in ts], label='Efficience')
+    # Journaliser un résumé des résultats
+    print(f"\n=== Résumé du scénario: {failure_type} ===")
+    print(f"Nombre de nœuds actifs en fin de simulation: {len(active_nodes_by_time[MAXTEMPS-1])}/{num_sats}")
+    
+    # Recherche de fragmentation du réseau
+    disconnected_times = [t for t in local_stats.keys() if local_stats[t].Connexity < 1.0]
+    if disconnected_times:
+        print(f"ATTENTION: Réseau fragmenté à {len(disconnected_times)} instants: {disconnected_times[:5]}...")
+        avg_components = sum(nx.number_connected_components(swarm_to_graph(local_swarms[t])) 
+                            for t in disconnected_times) / len(disconnected_times)
+        print(f"Nombre moyen de composantes: {avg_components:.2f}")
+    else:
+        print("Réseau connecté sur toute la durée de la simulation.")
+    
+    # Statistiques par protocole
+    for proto_name, proto_data in results.items():
+        best_param_idx = 0
+        best_dr = 0
         
-        # Marquer les instants de panne
-        if failure_type == 'predictable':
-            plt.axvline(x=T_PRED, color='r', linestyle='--', 
-                       label=f'Panne prévisible (t={T_PRED})')
+        if proto_name != 'Epidemic':  # Epidemic n'a pas de paramètre à varier
+            # Trouver le meilleur paramètre
+            param_name = proto_data['param_name']
+            for i, res in enumerate(proto_data['values']):
+                if res['delivery_ratio'] > best_dr:
+                    best_dr = res['delivery_ratio']
+                    best_param_idx = i
+            
+            best_param = proto_data['values'][best_param_idx]['param_value']
+            print(f"\n{proto_name} - Meilleur paramètre {param_name}={best_param}:")
+        else:
+            print(f"\n{proto_name}:")
         
-        plt.legend()
-        plt.grid(True)
-        plt.title(f'Évolution des métriques avec pannes ({failure_type})')
-        plt.savefig(f"{OUTDIR}/metrics_{failure_type}.png")
-        plt.close()
+        # Afficher les résultats du meilleur paramètre
+        best_result = proto_data['values'][best_param_idx]
+        print(f"  Delivery Ratio: {best_result['delivery_ratio']:.3f}")
+        print(f"  Delivery Delay: {best_result['delivery_delay']:.1f}")
         
-        # Graphiques pour les performances des protocoles DTN
-        for proto_name, proto_data in results.items():
-            if proto_name != 'Epidemic':  # Epidemic n'a pas de paramètre à varier
-                param_name = proto_data['param_name']
-                param_values = [res['param_value'] for res in proto_data['values']]
-                delivery_ratios = [res['delivery_ratio'] for res in proto_data['values']]
-                delivery_delays = [res['delivery_delay'] for res in proto_data['values']]
-                
-                plt.figure(figsize=(10, 4))
-                
-                plt.subplot(1, 2, 1)
-                plt.plot(param_values, delivery_ratios, 'o-')
-                plt.xlabel(param_name)
-                plt.ylabel('Delivery Ratio')
-                plt.title(f'{proto_name}: Delivery Ratio vs {param_name}')
-                plt.grid(True)
-                
-                plt.subplot(1, 2, 2)
-                plt.plot(param_values, delivery_delays, 'o-')
-                plt.xlabel(param_name)
-                plt.ylabel('Delivery Delay')
-                plt.title(f'{proto_name}: Delivery Delay vs {param_name}')
-                plt.grid(True)
-                
-                plt.tight_layout()
-                plt.savefig(f"{OUTDIR}/{proto_name}_{failure_type}.png")
-                plt.close()
+        # Vérifier les paquets non livrés
+        protocol = best_result['protocol_instance']
+        delivered = sum(1 for p in protocol.packet_logs if 't_recv' in p)
+        total = len(protocol.packet_logs)
+        print(f"  Paquets livrés: {delivered}/{total} ({100*delivered/total:.1f}%)")
     
     return avg_metric, results

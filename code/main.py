@@ -3,19 +3,45 @@ import numpy as np
 import random
 import pandas as pd
 import os
-from config import PATH, MAXTEMPS, MAX_RANGE, MID_RANGE, MIN_RANGE, OUTDIR, T_PRED, N_PRED
+import sys
+import argparse
+from config import PATH, MAXTEMPS, MAX_RANGE, MID_RANGE, MIN_RANGE, OUTDIR, T_PRED, N_PRED, CONFIG
 from data.loader import load_data
 from protocols.spray_and_wait import SprayAndWait
 from protocols.epidemic import Epidemic
 from protocols.prophet import Prophet
 from simulation.metrics import analyze_single_graph, compute_per_packet_metrics
 from simulation.failure import simulate_with_failures
-from simulation.visualize import plot_time_series, plot_snapshot, plot_protocol_comparison
+
+def parse_arguments():
+    """Parse les arguments de ligne de commande."""
+    parser = argparse.ArgumentParser(description="Simulation de robustesse d'un essaim de nano-satellites")
+    parser.add_argument(
+        '--categorie-panne', 
+        type=str, 
+        choices=['legere', 'moyenne', 'lourde'],
+        default='moyenne',
+        help='Catégorie de probabilité de pannes (legere, moyenne, lourde)'
+    )
+    
+    return parser.parse_args()
 
 def main():
     """Point d'entrée principal du programme."""
+    # Analyser les arguments de ligne de commande
+    args = parse_arguments()
     
-    print("### Analyse réseau satellite ###")
+    # Mettre à jour la catégorie de panne dans la configuration
+    print(f"### Analyse réseau satellite - Catégorie de panne: {args.categorie_panne} ###")
+    CONFIG['failure']['active_category'] = args.categorie_panne
+    
+    # Mettre à jour les variables globales de panne selon la catégorie choisie
+    global N_PRED, P_FAIL
+    N_PRED = CONFIG['failure']['categories'][args.categorie_panne]['predictable_nodes']
+    P_FAIL = CONFIG['failure']['categories'][args.categorie_panne]['random_prob']
+    
+    print(f"  - Probabilité de panne aléatoire: {P_FAIL*100:.2f}%")
+    print(f"  - Nombre de nœuds avec pannes prévisibles: {N_PRED}")
     
     # Chargement des données
     positions, swarms, matrixes, adjacency, num_sats = load_data(PATH, MAXTEMPS, {
@@ -51,44 +77,6 @@ def main():
     
     for metric, value in global_metric_values.items():
         print(f"{metric}: {value:.3f}")
-    
-    # Test des protocoles DTN
-    print("\n### Simulation DTN : Spray-and-Wait ###")
-    L = 10  # Nombre de copies pour Spray-and-Wait
-    spray = SprayAndWait(num_sats, L, DEST)
-    
-    for t in range(MAXTEMPS):
-        spray.step(t, adjacency[t])
-    
-    print(f"Delivery ratio vers {DEST}: {spray.delivery_ratio():.3f}")
-    print(f"Delivery delay vers {DEST}: {spray.delivery_delay():.1f}")
-    
-    print("\n### Simulation DTN : Epidemic & Prophet ###")
-    for name, proto in [
-        ('Epidemic', Epidemic(num_sats, 0, DEST)),
-        ('Prophet',  Prophet(num_sats, 0.5, 0, DEST))
-    ]:
-        for t in range(MAXTEMPS):
-            proto.step(t, adjacency[t])
-        print(f"{name} → ratio: {proto.delivery_ratio():.3f}, delay: {proto.delivery_delay():.1f}")
-    
-    # Visualisations
-    print("\n### Génération des visualisations ###")
-    do_plots = True
-    
-    if do_plots:
-        # Graphique de l'évolution temporelle
-        plot_time_series(stats)
-        
-        # Snapshots de la topologie aux instants intéressants
-        for t in [0, best_t, worst_t]:
-            try:
-                plot_snapshot(t, positions, matrixes, num_sats)
-                print(f"  - Snapshot généré pour t={t}")
-            except Exception as e:
-                print(f"  - Erreur lors de la génération du snapshot pour t={t}: {e}")
-    
-    print(f"\nFigures enregistrées dans `{OUTDIR}/`")
     
     # Simulation avec pannes de nœuds
     print("\n### Simulation avec pannes de nœuds ###")
@@ -169,34 +157,59 @@ def main():
         print(f"  Prévisible: {dd_pred_var:.1f}%")
         print(f"  Aléatoire: {dd_rand_var:.1f}%")
     
-    # Comparaison graphique
-    if do_plots:
-        plot_protocol_comparison(no_failure_results, predictable_results, random_results)
-    
     # Collecte et export des logs de paquets
     print("\n### Collecte et export des logs de paquets ###")
     packet_logs = []
     
-    # Parcourir tous les protocoles et résultats
+    # Déterminer les meilleurs paramètres pour chaque protocole et scénario
+    best_params = {}
+    for scenario, results in [("Sans panne", no_failure_results), 
+                             ("Prévisible", predictable_results), 
+                             ("Aléatoire", random_results)]:
+        best_params[scenario] = {}
+        for proto_name in ["Spray-and-Wait", "Epidemic", "Prophet"]:
+            # Pour Epidemic, toujours utiliser le paramètre par défaut
+            if proto_name == "Epidemic":
+                best_params[scenario][proto_name] = 0
+                continue
+                
+            proto_results = results[proto_name]['values']
+            # Trouver le paramètre donnant le meilleur delivery ratio
+            best_idx = max(range(len(proto_results)), 
+                          key=lambda i: proto_results[i]['delivery_ratio'])
+            best_params[scenario][proto_name] = best_idx
+            print(f"  - {scenario}, {proto_name}: Meilleur paramètre = {proto_results[best_idx]['param_value']}")
+    
+    # Parcourir tous les protocoles et résultats (uniquement les meilleures configurations)
     for scenario, results in [("Sans panne", no_failure_results), 
                              ("Prévisible", predictable_results), 
                              ("Aléatoire", random_results)]:
         for proto_name in ["Spray-and-Wait", "Epidemic", "Prophet"]:
-            for result in results[proto_name]['values']:
-                # Récupérer l'instance du protocole
-                protocol = result['protocol_instance']
-                # Ajouter le scénario à chaque log de paquet
-                for log in protocol.packet_logs:
-                    log['scenario'] = scenario
-                # Collecter les logs
-                packet_logs.extend(protocol.packet_logs)
+            # Utiliser le meilleur paramètre trouvé pour ce protocole et ce scénario
+            best_idx = best_params[scenario][proto_name]
+            result = results[proto_name]['values'][best_idx]
+            
+            # Récupérer l'instance du protocole
+            protocol = result['protocol_instance']
+            param_value = result['param_value']
+            
+            # Ajouter plus de métadonnées au log pour analyses futures
+            for log in protocol.packet_logs:
+                log['scenario'] = scenario
+                log['param_value'] = param_value
+                
+            # Collecter les logs
+            packet_logs.extend(protocol.packet_logs)
     
     # Exporter les logs en CSV
     if packet_logs:
         # Créer le DataFrame
         df = pd.DataFrame(packet_logs)
+        
         # Définir le chemin d'export
+        os.makedirs(OUTDIR, exist_ok=True)  # S'assurer que le répertoire existe
         csv_path = os.path.join(OUTDIR, "packet_logs.csv")
+        
         # Exporter en CSV
         df.to_csv(csv_path, index=False)
         print(f"  - {len(packet_logs)} logs de paquets exportés vers {csv_path}")

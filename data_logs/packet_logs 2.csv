@@ -1,0 +1,10 @@
+protocol,packet_id,src,dst,t_emit,t_recv,num_hops,scenario,param_value
+Spray-and-Wait,spray_0_50_0,0,50,0.0,0.5,1,Sans panne,2.0
+Epidemic,epidemic_0_50_0,0,50,0.0,0.5,1,Sans panne,0.0
+Prophet,prophet_0_50_0,0,50,0.0,0.5,1,Sans panne,0.1
+Spray-and-Wait,spray_0_50_0,0,50,0.0,0.5,1,Prévisible,2.0
+Epidemic,epidemic_0_50_0,0,50,0.0,0.5,1,Prévisible,0.0
+Prophet,prophet_0_50_0,0,50,0.0,0.5,1,Prévisible,0.1
+Spray-and-Wait,spray_0_50_0,0,50,0.0,0.5,1,Aléatoire,2.0
+Epidemic,epidemic_0_50_0,0,50,0.0,0.5,1,Aléatoire,0.0
+Prophet,prophet_0_50_0,0,50,0.0,0.5,1,Aléatoire,0.1

@@ -131,24 +131,44 @@ def get_weighted_matrix(swarm, min_range, mid_range, max_range):
     Returns:
         list: Matrice pondérée
     """
+    # Vérification que l'essaim n'est pas vide
+    if not swarm or not swarm.nodes:
+        print("ERREUR: Essaim vide dans get_weighted_matrix")
+        return [[]]
+    
+    # Création des matrices de connectivité pour chaque portée
     m20 = swarm.neighbor_matrix(min_range)
     m40 = swarm.neighbor_matrix(mid_range)
     m60 = swarm.neighbor_matrix(max_range)
     
+    # Vérifier que les matrices ont la même taille
     n = len(m20)
+    if len(m40) != n or len(m60) != n:
+        print(f"ERREUR: Les matrices de connectivité ont des tailles différentes: {len(m20)}, {len(m40)}, {len(m60)}")
+        return [[0 for _ in range(n)] for _ in range(n)]
+    
+    # Création de la matrice pondérée
+    result = [[0 for _ in range(n)] for _ in range(n)]
+    
     for i in range(n):
         for j in range(n):
-            if m20[i][j] == 0 and m40[i][j] == 1:
-                m20[i][j] = 2
-            elif m20[i][j] == 0 and m60[i][j] == 1:
-                m20[i][j] = 3
+            if i == j:  # Pas de connexion d'un nœud avec lui-même
+                result[i][j] = 0
+            elif m20[i][j] == 1:  # Connexion forte (MIN_RANGE)
+                result[i][j] = 1
+            elif m40[i][j] == 1:  # Connexion moyenne (MID_RANGE)
+                result[i][j] = 2
+            elif m60[i][j] == 1:  # Connexion faible (MAX_RANGE)
+                result[i][j] = 3
     
-    return m20
+    return result
 
 def get_importance(matrix, k):
     """Identifie les k nœuds les plus importants selon la centralité d'intermédiarité.
     
-    Cette implémentation se base sur les chemins les plus courts pondérés.
+    Cette implémentation utilise directement la fonction de NetworkX pour calculer
+    la centralité d'intermédiarité sur un graphe pondéré, ce qui est plus précis
+    que notre implémentation précédente.
     
     Args:
         matrix: Matrice de poids
@@ -158,19 +178,28 @@ def get_importance(matrix, k):
         list: Liste des k indices de nœuds les plus importants
     """
     G = swarm_to_graph(None, weighted_matrix=matrix)
-    cnt = {i: 0 for i in range(len(matrix))}
     
-    for i in cnt:
-        for j in cnt:
-            if j > i:
-                try:
-                    path = nx.dijkstra_path(G, i, j, weight='weight')
-                    for n in path[1:-1]:
-                        cnt[n] += 1
-                except nx.NetworkXNoPath:
-                    pass
+    # Si le graphe n'a pas assez de nœuds ou est vide
+    if G.number_of_nodes() <= 1:
+        return list(range(min(k, len(matrix))))
     
-    return sorted(cnt, key=cnt.get, reverse=True)[:k]
+    # Si le graphe n'est pas connexe, le traiter composante par composante
+    if nx.number_connected_components(G) > 1:
+        # Calculer la centralité sur chaque composante connexe
+        combined_bc = {}
+        for component in nx.connected_components(G):
+            subgraph = G.subgraph(component)
+            bc = nx.betweenness_centrality(subgraph, weight='weight', normalized=True)
+            combined_bc.update(bc)
+        
+        # Trier par valeur de centralité
+        sorted_nodes = sorted(combined_bc.items(), key=lambda x: x[1], reverse=True)
+        return [node for node, _ in sorted_nodes[:k]]
+    else:
+        # Calculer la centralité d'intermédiarité normalisée
+        bc = nx.betweenness_centrality(G, weight='weight', normalized=True)
+        sorted_nodes = sorted(bc.items(), key=lambda x: x[1], reverse=True)
+        return [node for node, _ in sorted_nodes[:k]]
 
 def get_centrality(swarm, k):
     """Identifie les k nœuds les plus centraux selon la centralité de degré.
@@ -182,8 +211,20 @@ def get_centrality(swarm, k):
     Returns:
         list: Liste des k indices de nœuds les plus centraux
     """
-    cen = nx.degree_centrality(swarm.swarm_to_nxgraph())
-    return sorted(cen, key=cen.get, reverse=True)[:k]
+    G = swarm.swarm_to_nxgraph()
+    
+    # Si le graphe n'a pas assez de nœuds
+    if G.number_of_nodes() <= 1:
+        return [node.id for node in swarm.nodes[:min(k, len(swarm.nodes))]]
+    
+    # Calculer la centralité de degré
+    degree_cen = nx.degree_centrality(G)
+    
+    # Trier les nœuds par centralité décroissante
+    sorted_nodes = sorted(degree_cen.items(), key=lambda x: x[1], reverse=True)
+    
+    # Renvoyer les k premiers nœuds
+    return [node for node, _ in sorted_nodes[:k]]
 
 def compute_per_packet_metrics(packet_logs_path, output_path=None):
     """
