@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rapport d'Analyse Topologique du Réseau Satellite</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
+        h1, h2, h3 { color: #2c3e50; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin-bottom: 30px; padding: 20px; background-color: #f9f9f9; border-radius: 5px; }
+        .img-container { text-align: center; margin: 20px 0; }
+        img { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .caption { font-style: italic; color: #666; text-align: center; margin-top: 8px; }
+        .highlight { background-color: #fffacd; padding: 15px; border-left: 4px solid #ffd700; margin: 20px 0; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
+        tr:hover { background-color: #f5f5f5; }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center; font-size: 0.9em; color: #777; }
+        @media print { 
+            body { font-size: 12pt; }
+            .section { break-inside: avoid; }
+            a { text-decoration: none; color: #000; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Rapport d'Analyse Topologique du Réseau Satellite</h1>
+        <p>Date de génération: Lun 19 mai 2025 14:20:26 CEST</p>
+        
+        <div class="section">
+            <h2>1. Métriques Topologiques Générales</h2>
+            <p>Vue d'ensemble des 6 métriques clés pour évaluer la robustesse du réseau:</p>
+            <div class="img-container">
+                <img src="../metriques_topologiques.png" alt="Métriques topologiques">
+                <div class="caption">Figure 1: Évolution des métriques topologiques sous différents scénarios de panne</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>2. Focus sur les Métriques d'Efficacité</h2>
+            
+            <h3>2.1 Efficacité Globale</h3>
+            <p>L'efficacité globale mesure la rapidité moyenne de communication à travers l'ensemble du réseau.</p>
+            <div class="img-container">
+                <img src="../efficacite/efficacite_globale.png" alt="Efficacité globale">
+                <div class="caption">Figure 2: Évolution de l'efficacité globale du réseau</div>
+            </div>
+            
+            <h3>2.2 Efficacité Locale</h3>
+            <p>L'efficacité locale mesure la résilience du réseau autour de chaque satellite.</p>
+            <div class="img-container">
+                <img src="../efficacite/efficacite_locale.png" alt="Efficacité locale">
+                <div class="caption">Figure 3: Évolution de l'efficacité locale du réseau</div>
+            </div>
+            
+            <h3>2.3 Comparaison des deux métriques d'efficacité</h3>
+            <div class="img-container">
+                <img src="../efficacite/comparaison_efficacite.png" alt="Comparaison d'efficacité">
+                <div class="caption">Figure 4: Comparaison entre l'efficacité globale et locale</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>3. Impact des Pannes et Attaques</h2>
+            
+            <div class="highlight">
+                <h3>Analyse comparative avant/après panne</h3>
+                <p>Les variations des métriques suite aux différents scénarios de panne:</p>
+                <div class="img-container">
+                    <img src="../variations_metriques.png" alt="Variations des métriques">
+                    <div class="caption">Figure 5: Impact des différents scénarios sur les métriques topologiques</div>
+                </div>
+                
+                <div class="img-container">
+                    <img src="../efficacite/variations_efficacite.png" alt="Variations d'efficacité">
+                    <div class="caption">Figure 6: Impact spécifique sur les métriques d'efficacité</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Projet: Analyse de la robustesse d'un réseau de nanosatellites</p>
+            <p>Rapport généré automatiquement par le script d'analyse topologique</p>
+        </div>
+    </div>
+</body>
+</html>

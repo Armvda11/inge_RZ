@@ -61,7 +61,7 @@ os.makedirs(f"{OUTDIR}/topologie", exist_ok=True)
 
 def calculer_metriques(G):
     """
-    Calcule les 4 métriques clés pour un graphe donné.
+    Calcule les 6 métriques clés pour un graphe donné.
     
     Args:
         G: Graphe NetworkX
@@ -75,7 +75,9 @@ def calculer_metriques(G):
             "degre_moyen": 0,
             "taille_composante_geante": 0,
             "longueur_moyenne_chemins": 0,
-            "coefficient_clustering": 0
+            "coefficient_clustering": 0,
+            "efficacite_globale": 0,
+            "efficacite_locale": 0
         }
     
     # 1. Degré moyen ⟨k⟩
@@ -104,11 +106,21 @@ def calculer_metriques(G):
     # 4. Coefficient de clustering C
     coefficient_clustering = nx.average_clustering(G)
     
+    # 5. Efficacité globale (Global efficiency)
+    # Mesure la rapidité moyenne de communication à l'échelle du réseau
+    efficacite_globale = nx.global_efficiency(G)
+    
+    # 6. Efficacité locale (Local efficiency)
+    # Mesure la résilience locale autour de chaque satellite
+    efficacite_locale = nx.local_efficiency(G)
+    
     return {
         "degre_moyen": degre_moyen,
         "taille_composante_geante": taille_composante_geante,
         "longueur_moyenne_chemins": longueur_moyenne_chemins,
-        "coefficient_clustering": coefficient_clustering
+        "coefficient_clustering": coefficient_clustering,
+        "efficacite_globale": efficacite_globale,
+        "efficacite_locale": efficacite_locale
     }
 
 
@@ -370,12 +382,12 @@ def analyser_topologie():
         critical_zone_color = 'lightyellow'
         
         # Paramètres de figure communs
-        plt.figure(figsize=(16, 12))
+        plt.figure(figsize=(16, 18))  # Augmenté la hauteur pour accommoder 6 graphiques
         plt.suptitle("Métriques topologiques d'un réseau de nanosatellites sous différents scénarios de panne et d'attaque", 
                     fontsize=16, fontweight='bold')
         
         # 1. Degré moyen ⟨k⟩ : combien de liens en moyenne par satellite
-        plt.subplot(2, 2, 1)
+        plt.subplot(3, 2, 1)
         
         # Fond pour les moments critiques
         for t in critical_moments:
@@ -454,6 +466,44 @@ def analyser_topologie():
         plt.grid(True, alpha=0.3)
         plt.legend(loc='best')
         
+        # 5. Efficacité globale
+        plt.subplot(3, 2, 5)
+        
+        # Fond pour les moments critiques
+        for t in critical_moments:
+            plt.axvspan(t-0.5, t+0.5, color=critical_zone_color, alpha=0.3)
+            
+        plt.plot(df_none['t'], df_none['efficacite_globale'], **styles['none'])
+        plt.plot(df_predictable['t'], df_predictable['efficacite_globale'], **styles['predictable'])
+        plt.plot(df_random['t'], df_random['efficacite_globale'], **styles['random'])
+        plt.plot(df_betweenness['t'], df_betweenness['efficacite_globale'], **styles['betweenness'])
+        plt.axvline(x=T_PRED, color='black', linestyle='--', linewidth=1.5)
+        
+        plt.title('Efficacité globale Eglob(G)', fontweight='bold')
+        plt.xlabel('Temps (t)')
+        plt.ylabel('Efficacité globale')
+        plt.grid(True, alpha=0.3)
+        plt.legend(loc='best')
+        
+        # 6. Efficacité locale
+        plt.subplot(3, 2, 6)
+        
+        # Fond pour les moments critiques
+        for t in critical_moments:
+            plt.axvspan(t-0.5, t+0.5, color=critical_zone_color, alpha=0.3)
+            
+        plt.plot(df_none['t'], df_none['efficacite_locale'], **styles['none'])
+        plt.plot(df_predictable['t'], df_predictable['efficacite_locale'], **styles['predictable'])
+        plt.plot(df_random['t'], df_random['efficacite_locale'], **styles['random'])
+        plt.plot(df_betweenness['t'], df_betweenness['efficacite_locale'], **styles['betweenness'])
+        plt.axvline(x=T_PRED, color='black', linestyle='--', linewidth=1.5)
+        
+        plt.title('Efficacité locale Eloc(G)', fontweight='bold')
+        plt.xlabel('Temps (t)')
+        plt.ylabel('Efficacité locale')
+        plt.grid(True, alpha=0.3)
+        plt.legend(loc='best')
+        
         plt.tight_layout()
         plt.subplots_adjust(top=0.92)  # Ajuster pour le titre principal
         
@@ -495,7 +545,9 @@ def analyser_topologie():
                 ('degre_moyen', 'Degré moyen ⟨k⟩'),
                 ('taille_composante_geante', 'Taille composante géante |Gₘₐₓ|/N'),
                 ('longueur_moyenne_chemins', 'Longueur moyenne chemins ℓ̄'),
-                ('coefficient_clustering', 'Coefficient de clustering C')
+                ('coefficient_clustering', 'Coefficient de clustering C'),
+                ('efficacite_globale', 'Efficacité globale Eglob(G)'),
+                ('efficacite_locale', 'Efficacité locale Eloc(G)')
             ]:
                 # Éviter division par zéro
                 if avant[metrique] == 0:
@@ -570,4 +622,6 @@ def analyser_topologie():
 
 
 if __name__ == "__main__":
-    analyser_topologie()
+    success = analyser_topologie()
+    # Retourner un code de sortie approprié pour le script shell
+    sys.exit(0 if success else 1)
