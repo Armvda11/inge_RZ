@@ -1,0 +1,17 @@
+Scénario,Métrique,Avant (t=49),Après (t=50),Variation (%)
+Sans panne,Degré moyen ⟨k⟩,39.4,39.42,0.05076142131980489
+Sans panne,Taille composante géante |Gₘₐₓ|/N,1.0,1.0,0.0
+Sans panne,Longueur moyenne chemins ℓ̄,1.860808080808081,1.8595959595959597,-0.06513950711106327
+Sans panne,Coefficient de clustering C,0.7315766746752155,0.7321542428126968,0.07894840793519621
+Panne prévisible,Degré moyen ⟨k⟩,39.4,18.771428571428572,-52.356780275561995
+Panne prévisible,Taille composante géante |Gₘₐₓ|/N,1.0,1.0,0.0
+Panne prévisible,Longueur moyenne chemins ℓ̄,1.860808080808081,2.2703933747412006,22.011151937563156
+Panne prévisible,Coefficient de clustering C,0.7315766746752155,0.6922586914985129,-5.374417274055084
+Panne aléatoire,Degré moyen ⟨k⟩,18.807692307692307,18.666666666666668,-0.7498295841854004
+Panne aléatoire,Taille composante géante |Gₘₐₓ|/N,0.9807692307692307,0.9803921568627451,-0.03844675124951928
+Panne aléatoire,Longueur moyenne chemins ℓ̄,1.9827450980392156,1.9820408163265306,-0.03552053732885163
+Panne aléatoire,Coefficient de clustering C,0.7168155548060959,0.7241349933484675,1.0211048704644206
+Attaque betweenness,Degré moyen ⟨k⟩,39.4,22.65714285714286,-42.49456127628716
+Attaque betweenness,Taille composante géante |Gₘₐₓ|/N,1.0,0.9714285714285714,-2.857142857142858
+Attaque betweenness,Longueur moyenne chemins ℓ̄,1.860808080808081,2.0074626865671643,7.8812322061389954
+Attaque betweenness,Coefficient de clustering C,0.7315766746752155,0.6977903033095298,-4.618295325050534

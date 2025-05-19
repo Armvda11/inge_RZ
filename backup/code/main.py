@@ -5,13 +5,19 @@ import pandas as pd
 import os
 import sys
 import argparse
-from config import PATH, MAXTEMPS, MAX_RANGE, MID_RANGE, MIN_RANGE, OUTDIR, T_PRED, N_PRED, CONFIG
+import copy
+from config import PATH, MAXTEMPS, MAX_RANGE, MID_RANGE, MIN_RANGE, OUTDIR, T_PRED, N_PRED, P_FAIL, CONFIG
 from data.loader import load_data
 from protocols.spray_and_wait import SprayAndWait
 from protocols.epidemic import Epidemic
 from protocols.prophet import Prophet
-from simulation.metrics import analyze_single_graph, compute_per_packet_metrics
-from simulation.failure import simulate_with_failures
+from models.swarm import Swarm
+from simulation.metrics import analyze_single_graph, compute_per_packet_metrics, get_weighted_matrix
+from simulation.failure import simulate_with_failures, NodeFailureManager
+from simulation.visualize import plot_time_series
+from simulation.visualize_degree_dist import plot_degree_distribution, compare_degree_distributions
+from simulation.advanced_metrics import analyze_advanced_robustness
+from analyze_results import format_change
 
 def parse_arguments():
     """Parse les arguments de ligne de commande."""
@@ -57,8 +63,30 @@ def main():
     print("### Analyse topologique par instant ###")
     stats = {t: analyze_single_graph(swarms[t], matrixes[t]) for t in range(MAXTEMPS)}
     
+    # Tracer l'évolution temporelle des métriques
+    print("  - Génération des graphiques d'évolution temporelle...")
+    plot_time_series(stats)
+    
+    # Visualiser la distribution des degrés à différents moments (début, T_PRED, fin)
+    print("  - Génération des graphiques de distribution des degrés...")
+    # Distribution au début de la simulation (t=0)
+    plot_degree_distribution(stats[0].DegreeDistribution, 
+                           title="Distribution des degrés au début de la simulation (t=0)", 
+                           filename="degree_dist_start")
+    
+    # Distribution au moment T_PRED (si défini et dans la plage)
+    if T_PRED is not None and 0 <= T_PRED < MAXTEMPS:
+        plot_degree_distribution(stats[T_PRED].DegreeDistribution, 
+                               title=f"Distribution des degrés à T_PRED (t={T_PRED})", 
+                               filename="degree_dist_t_pred")
+    
+    # Distribution à la fin de la simulation
+    plot_degree_distribution(stats[MAXTEMPS-1].DegreeDistribution, 
+                           title=f"Distribution des degrés à la fin (t={MAXTEMPS-1})", 
+                           filename="degree_dist_end")
+    
     # Identification des meilleurs/pires instants en termes d'efficacité
-    connected_instants = [t for t, m in stats.items() if m.Connexity == 1.0]
+    connected_instants = [t for t, m in stats.items() if m.Connexity > 0.9]  # Au moins 90% des nœuds connectés
     if connected_instants:
         best_t = max(connected_instants, key=lambda t: stats[t].Efficiency)
         worst_t = min(connected_instants, key=lambda t: stats[t].Efficiency)
@@ -110,6 +138,33 @@ def main():
           f"{random_metrics.MeanClusterCoef:<12.3f} {random_metrics.Connexity:<12.3f} "
           f"{random_metrics.Efficiency:<12.3f}")
     
+    # Comparer les distributions de degrés entre les différents scénarios
+    print("\n  - Comparaison des distributions de degrés entre les scénarios...")
+    
+    # Sans panne vs. Pannes prévisibles
+    compare_degree_distributions(
+        no_failure_metrics.DegreeDistribution,
+        predictable_metrics.DegreeDistribution,
+        event_name="pannes prévisibles",
+        filename="degree_dist_comparison_no_vs_predictable"
+    )
+    
+    # Sans panne vs. Pannes aléatoires
+    compare_degree_distributions(
+        no_failure_metrics.DegreeDistribution,
+        random_metrics.DegreeDistribution,
+        event_name="pannes aléatoires",
+        filename="degree_dist_comparison_no_vs_random"
+    )
+    
+    # Pannes prévisibles vs. Pannes aléatoires
+    compare_degree_distributions(
+        predictable_metrics.DegreeDistribution,
+        random_metrics.DegreeDistribution,
+        event_name="types de pannes (prévisibles vs. aléatoires)",
+        filename="degree_dist_comparison_predictable_vs_random"
+    )
+    
     # Comparaison des performances DTN entre les scénarios
     print("\n### Comparaison des performances DTN ###")
     for proto_name in ['Spray-and-Wait', 'Epidemic', 'Prophet']:
@@ -149,13 +204,16 @@ def main():
         dd_pred_var = ((predictable_dd - no_failure_dd) / no_failure_dd) * 100 if no_failure_dd > 0 else float('inf')
         dd_rand_var = ((random_dd - no_failure_dd) / no_failure_dd) * 100 if no_failure_dd > 0 else float('inf')
         
+        # Import de la fonction de formatage de analyze_results.py
+        from analyze_results import format_change
+        
         print(f"\nVariation du delivery ratio:")
-        print(f"  Prévisible: {dr_pred_var:.1f}%")
-        print(f"  Aléatoire: {dr_rand_var:.1f}%")
+        print(f"  Prévisible: {format_change(dr_pred_var)}")
+        print(f"  Aléatoire: {format_change(dr_rand_var)}")
         
         print(f"Variation du delivery delay:")
-        print(f"  Prévisible: {dd_pred_var:.1f}%")
-        print(f"  Aléatoire: {dd_rand_var:.1f}%")
+        print(f"  Prévisible: {format_change(dd_pred_var)}")
+        print(f"  Aléatoire: {format_change(dd_rand_var)}")
     
     # Collecte et export des logs de paquets
     print("\n### Collecte et export des logs de paquets ###")
@@ -219,6 +277,95 @@ def main():
         compute_per_packet_metrics(csv_path, metrics_path)
     else:
         print("  - Aucun log de paquet collecté")
+    
+    # Analyse avancée de la robustesse du réseau avec les nouvelles métriques
+    print("\n### Analyse avancée de la robustesse du réseau ###")
+    print("  - Calcul des métriques avancées...")
+    
+    # Préparer les données pour l'analyse avancée (structure par scénario)
+    advanced_swarms = {
+        'none': {t: swarms[t] for t in range(MAXTEMPS)},        # Swarms originaux (sans panne)
+        'predictable': {},                                       # Swarms avec pannes prévisibles
+        'random': {}                                             # Swarms avec pannes aléatoires
+    }
+    
+    advanced_matrixes = {
+        'none': {t: matrixes[t] for t in range(MAXTEMPS)},       # Matrices originales (sans panne)
+        'predictable': {},                                       # Matrices avec pannes prévisibles
+        'random': {}                                             # Matrices avec pannes aléatoires
+    }
+    
+    # Récupérer les swarms et matrices modifiés pour les scénarios avec pannes
+    for t in range(MAXTEMPS):
+        # Simuler les pannes prévisibles à ce temps
+        failure_mgr_pred = NodeFailureManager(dict(positions))
+        failure_mgr_pred.setup_predictable_failures(T_PRED, N_PRED, 'centralite', 
+                                              matrixes[best_t], swarms[best_t])
+        
+        # Appliquer les pannes prévisibles
+        nodes_pred = copy.deepcopy(positions[t])
+        failure_mgr_pred.apply_failures(t, nodes_pred)
+        active_nodes_pred = failure_mgr_pred.get_active_nodes(nodes_pred)
+        
+        # Reconstruire swarm et matrice pour les pannes prévisibles
+        sw_pred = Swarm(MAX_RANGE, list(active_nodes_pred.values()))
+        advanced_swarms['predictable'][t] = sw_pred
+        advanced_matrixes['predictable'][t] = get_weighted_matrix(sw_pred, MIN_RANGE, MID_RANGE, MAX_RANGE)
+        
+        # Simuler les pannes aléatoires à ce temps
+        failure_mgr_rand = NodeFailureManager(dict(positions))
+        failure_mgr_rand.setup_random_failures(P_FAIL)
+        
+        # Appliquer les pannes aléatoires
+        nodes_rand = copy.deepcopy(positions[t])
+        failure_mgr_rand.apply_failures(t, nodes_rand)
+        active_nodes_rand = failure_mgr_rand.get_active_nodes(nodes_rand)
+        
+        # Reconstruire swarm et matrice pour les pannes aléatoires
+        sw_rand = Swarm(MAX_RANGE, list(active_nodes_rand.values()))
+        advanced_swarms['random'][t] = sw_rand
+        advanced_matrixes['random'][t] = get_weighted_matrix(sw_rand, MIN_RANGE, MID_RANGE, MAX_RANGE)
+    
+    # Exécuter l'analyse avancée de robustesse
+    try:
+        metrics_df, csv_path, report_path = analyze_advanced_robustness(
+            advanced_swarms, advanced_matrixes
+        )
+        
+        # Afficher un résumé des résultats clés
+        print("\n  - Résumé des impacts critiques par scénario:")
+        
+        scenarios = ['none', 'predictable', 'random']
+        scenario_names = {'none': 'Sans panne', 'predictable': 'Pannes prévisibles', 'random': 'Pannes aléatoires'}
+        
+        for scenario in scenarios:
+            row = metrics_df[metrics_df['scenario'] == scenario].iloc[0]
+            scenario_name = scenario_names.get(scenario, scenario)
+            print(f"\n    {scenario_name}:")
+            
+            # Degré moyen (redondance)
+            print(f"      - Degré moyen: {row['before_mean_degree']:.3f} → {row['after_mean_degree']:.3f} ({format_change(row['delta_mean_degree'])})")
+            
+            # Taille de la composante géante (fragmentation)
+            print(f"      - Composante géante: {row['before_giant_component']:.3f} → {row['after_giant_component']:.3f} ({format_change(row['delta_giant_component'])})")
+            
+            # Longueur moyenne des chemins (stretching)
+            print(f"      - Longueur des chemins: {row['before_path_length']:.3f} → {row['after_path_length']:.3f} ({format_change(row['delta_path_length'])})")
+            
+            # Diamètre (worst case)
+            print(f"      - Diamètre: {row['before_diameter']:.1f} → {row['after_diameter']:.1f} ({format_change(row['delta_diameter'])})")
+            
+            # Coefficient de clustering (maillage local)
+            print(f"      - Clustering: {row['before_clustering']:.3f} → {row['after_clustering']:.3f} ({format_change(row['delta_clustering'])})")
+        
+        print(f"\n  - Détails complets disponibles dans: {report_path}")
+        print(f"  - Données exportées au format CSV: {csv_path}")
+        print(f"  - Graphiques générés dans le dossier: {OUTDIR}/advanced/")
+        
+    except Exception as e:
+        print(f"  - Erreur lors de l'analyse avancée: {e}")
+        import traceback
+        traceback.print_exc()
     
     print("\n### Analyse terminée ###")
     

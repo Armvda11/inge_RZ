@@ -4,7 +4,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import os
-from config import OUTDIR, WINDOW_SIZE
+from config import OUTDIR, WINDOW_SIZE, T_PRED
 
 def plot_time_series(stats):
     """
@@ -19,16 +19,42 @@ def plot_time_series(stats):
     k = [stats[t].Connexity for t in ts]
     e = [stats[t].Efficiency for t in ts]
 
-    plt.figure(figsize=(8, 4))
+    # Créer deux sous-graphiques: un pour le degré moyen et la connexité
+    plt.figure(figsize=(12, 10))
+    
+    # Premier sous-graphique: Degré moyen et Connexité (Gmax/N)
+    plt.subplot(2, 1, 1)
+    plt.plot(ts, d, 'b-', label='Degré moyen <k>', linewidth=2)
+    plt.plot(ts, k, 'r-', label='Connexité (Gmax/N)', linewidth=2)
+    
+    # Ajouter une ligne verticale à T_PRED si défini dans les statistiques
+    from config import T_PRED
+    if 'T_PRED' in globals() and T_PRED is not None:
+        plt.axvline(x=T_PRED, color='g', linestyle='--', label='T_PRED (Pannes prévisibles)')
+    
+    plt.legend(loc='best')
+    plt.xlabel('Temps')
+    plt.ylabel('Valeur')
+    plt.title('Évolution du degré moyen et de la connexité au cours du temps')
+    plt.grid(True)
+    
+    # Second sous-graphique: Toutes les métriques
+    plt.subplot(2, 1, 2)
     plt.plot(ts, d, label='Degré moyen')
     plt.plot(ts, c, label='Clustering')
     plt.plot(ts, k, label='Connexité')
     plt.plot(ts, e, label='Efficience')
-    plt.legend()
+    
+    # Ajouter une ligne verticale à T_PRED si défini
+    if 'T_PRED' in globals() and T_PRED is not None:
+        plt.axvline(x=T_PRED, color='g', linestyle='--', label='T_PRED')
+    
+    plt.legend(loc='best')
     plt.xlabel('Temps')
     plt.ylabel('Valeur')
-    plt.title('Évolution des métriques')
+    plt.title('Évolution de toutes les métriques au cours du temps')
     plt.grid(True)
+    
     plt.tight_layout()
     plt.savefig(f"{OUTDIR}/time_series.png")
     plt.close()

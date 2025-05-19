@@ -1,9 +1,11 @@
 # simulation/failure.py
 import random
 import numpy as np
-from config import T_PRED, N_PRED, P_FAIL
+from config import T_PRED, N_PRED, P_FAIL, OUTDIR
 import networkx as nx
-from simulation.metrics import get_importance, get_centrality, swarm_to_graph
+import matplotlib.pyplot as plt
+from simulation.metrics import get_importance, get_centrality, swarm_to_graph, analyze_single_graph, Metric
+from simulation.visualize_degree_dist import plot_degree_distribution, compare_degree_distributions
 
 class NodeFailureManager:
     """Gestionnaire de pannes de nœuds.
@@ -67,6 +69,29 @@ class NodeFailureManager:
         for node_id in self.predictable_failures:
             self.failure_times[node_id] = t_pred
     
+    def setup_random_failures(self, prob_failure):
+        """Configure les pannes aléatoires.
+        
+        Args:
+            prob_failure: Probabilité qu'un nœud tombe en panne à chaque pas de temps
+        """
+        self.random_failure_prob = prob_failure
+        
+        # Pré-calculer les pannes aléatoires pour chaque temps
+        # afin d'avoir un comportement déterministe et cohérent
+        max_time = max(self.positions.keys())
+        all_nodes = set(self.positions[0].keys())
+        self.random_failure_times = {}
+        
+        # Pour chaque nœud et chaque temps, déterminer s'il tombe en panne
+        for node_id in all_nodes:
+            for t in range(max_time + 1):
+                # Tirer un nombre aléatoire et vérifier s'il est inférieur à la probabilité de panne
+                if random.random() < prob_failure:
+                    if node_id not in self.random_failure_times:
+                        self.random_failure_times[node_id] = t
+                        self.failure_times[node_id] = t
+    
     def apply_failures(self, t: int, positions: dict):
         """Applique les pannes à l'instant t.
         
@@ -82,11 +107,37 @@ class NodeFailureManager:
                     self.failed_nodes.add(node_id)
                     self.failure_times[node_id] = t
                     #print(f"  - Nœud {node_id} désactivé (panne prévisible)")
-        
-        # Appliquer pannes aléatoires avec probabilité p_fail
-        # Seulement pour les nœuds qui ne sont pas déjà programmés pour une panne prévisible
+         # Appliquer pannes aléatoires
+        # Identifier les nœuds actifs non prévus pour une panne prévisible
         active_nodes = [node_id for node_id, node in positions.items() 
                       if node.active and node_id not in self.predictable_failures]
+        
+        # D'abord vérifier si nous avons des pannes pré-calculées
+        if hasattr(self, 'random_failure_times'):
+            # Utiliser des pannes pré-calculées pour un comportement cohérent
+            for node_id, failure_time in self.random_failure_times.items():
+                if failure_time == t and node_id in active_nodes and positions[node_id].active:
+                    positions[node_id].active = False
+                    self.failed_nodes.add(node_id)
+                    #print(f"  - Nœud {node_id} désactivé (panne aléatoire pré-calculée)")
+        else:
+            # Comportement legacy: appliquer des pannes aléatoires à la volée
+            # Limiter le nombre total de pannes par pas de temps
+            # pour éviter une cascade de pannes qui fragmenterait trop le réseau
+            max_failures_per_step = max(1, len(active_nodes) // 20)  # Au plus 5% des nœuds actifs
+            
+            # Tirage aléatoire pour déterminer quels nœuds tombent en panne
+            random_failures = []
+            for node_id in active_nodes:
+                if random.random() < P_FAIL and len(random_failures) < max_failures_per_step:
+                    random_failures.append(node_id)
+            
+            # Appliquer les pannes aléatoires
+            for node_id in random_failures:
+                positions[node_id].active = False
+                self.failed_nodes.add(node_id)
+                self.failure_times[node_id] = t
+                #print(f"  - Nœud {node_id} désactivé (panne aléatoire à t={t})")
         
         # Utiliser P_FAIL comme probabilité mais limiter le nombre total de pannes par pas de temps
         # pour éviter une cascade de pannes qui fragmenterait trop le réseau
@@ -208,12 +259,61 @@ def simulate_with_failures(positions, swarms, matrixes, adjacency, num_sats, des
     local_stats = {t: analyze_single_graph(local_swarms[t], local_matrixes[t]) 
                   for t in range(MAXTEMPS)}
     
+    # Si c'est un scénario avec des pannes prévisibles à T_PRED, visualiser l'impact
+    if failure_mgr.predictable_failures and T_PRED is not None and 0 <= T_PRED < MAXTEMPS:
+        # Analyser les métriques juste avant et juste après T_PRED
+        if T_PRED > 0:
+            before_t = T_PRED - 1
+        else:
+            before_t = 0
+        after_t = T_PRED
+        
+        print(f"  - Analyse de l'impact des pannes prévisibles à T_PRED={T_PRED}...")
+        print(f"    Degré moyen: {local_stats[before_t].MeanDegree:.3f} -> {local_stats[after_t].MeanDegree:.3f}")
+        print(f"    Connexité: {local_stats[before_t].Connexity:.3f} -> {local_stats[after_t].Connexity:.3f}")
+        
+        # Visualiser la distribution des degrés avant/après les pannes prévisibles
+        compare_degree_distributions(
+            local_stats[before_t].DegreeDistribution,
+            local_stats[after_t].DegreeDistribution,
+            event_name=f"pannes prévisibles à T_PRED={T_PRED}",
+            filename=f"degree_dist_before_after_T_PRED_{failure_type}"
+        )
+        
+        # Visualiser l'évolution des mesures de robustesse spécifiquement autour de T_PRED
+        plt.figure(figsize=(10, 6))
+        t_range = range(max(0, T_PRED-5), min(MAXTEMPS, T_PRED+6))  # Visualisation autour de T_PRED
+        
+        # Tracer l'évolution du degré moyen et de la connexité autour de T_PRED
+        plt.plot([t for t in t_range], 
+                [local_stats[t].MeanDegree for t in t_range], 
+                'b-', label='Degré moyen <k>', linewidth=2)
+        plt.plot([t for t in t_range], 
+                [local_stats[t].Connexity for t in t_range], 
+                'r-', label='Connexité (Gmax/N)', linewidth=2)
+        
+        # Marquer T_PRED
+        plt.axvline(x=T_PRED, color='g', linestyle='--', label=f'T_PRED={T_PRED}')
+        
+        plt.legend(loc='best')
+        plt.xlabel('Temps')
+        plt.ylabel('Valeur')
+        plt.title(f'Impact des pannes prévisibles ({failure_type}) sur les métriques de robustesse')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(f"{OUTDIR}/impact_T_PRED_{failure_type}.png")
+        plt.close()
+    
     # Métriques moyennes
+    # Utiliser la distribution des degrés de l'état final (ou un instant représentatif)
+    representative_t = MAXTEMPS - 1  # Utiliser le dernier instant comme représentatif
+    
     avg_metric = Metric(
         np.mean([m.MeanDegree for m in local_stats.values()]),
         np.mean([m.MeanClusterCoef for m in local_stats.values()]),
         np.mean([m.Connexity for m in local_stats.values()]),
-        np.mean([m.Efficiency for m in local_stats.values() if m.Connexity == 1.0])
+        np.mean([m.Efficiency for m in local_stats.values() if m.Connexity > 0.5]),  # Use Connexity > 0.5 instead of == 1.0
+        local_stats[representative_t].DegreeDistribution  # Utiliser la distribution du dernier instant
     )
     
     # Simuler les protocoles DTN

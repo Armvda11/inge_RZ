@@ -20,11 +20,11 @@ CONFIG = {
                 'predictable_nodes': 3  # Nombre faible de nœuds prédictibles
             },
             'moyenne': {
-                'random_prob': 0.05,   # 1% de probabilité par pas de temps
+                'random_prob': 0.05,   # 5% de probabilité par pas de temps
                 'predictable_nodes': 30  # Nombre moyen de nœuds prédictibles
             },
             'lourde': {
-                'random_prob': 0.10,   # 2% de probabilité par pas de temps
+                'random_prob': 0.20,   #  probabilité par pas de temps
                 'predictable_nodes': 50  # Nombre élevé de nœuds prédictibles
             }
         },

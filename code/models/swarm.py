@@ -29,7 +29,30 @@ class Swarm:
             str: description textuelle de l'essaim
         """
         nb_nodes = len(self.nodes)
-        return f"Swarm of {nb_nodes} node(s), connection range: {self.connection_range}"
+        
+        return f"Essaim avec {nb_nodes} satellite{'s' if nb_nodes > 1 else ''}, rayon de connexion {self.connection_range}"
+    
+    @property
+    def edges(self):
+        """
+        Propriété qui calcule et renvoie la liste des arêtes du réseau.
+        
+        Returns:
+            list: Liste des tuples (node1, node2) représentant les arêtes
+        """
+        edge_list = []
+        # Pour éviter de compter deux fois la même arête
+        seen = set()
+        
+        for node in self.nodes:
+            for neighbor in node.neighbors:
+                # Créer un tuple ordonné pour identifier l'arête de manière unique
+                edge_id = tuple(sorted([node.id, neighbor.id]))
+                if edge_id not in seen:
+                    edge_list.append((node, neighbor))
+                    seen.add(edge_id)
+        
+        return edge_list
     
     #*************** Opérations courantes ***************
     def add_node(self, node):

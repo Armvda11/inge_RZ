@@ -12,13 +12,15 @@ class Metric:
     Attributes:
         MeanDegree: Degré moyen du graphe
         MeanClusterCoef: Coefficient de clustering moyen
-        Connexity: 1.0 si le graphe est connexe, 0.0 sinon
+        Connexity: Taille normalisée de la plus grande composante connexe (Gmax/N)
         Efficiency: Mesure de l'efficience du graphe pondéré
+        DegreeDistribution: Distribution des degrés (dictionnaire avec degré:fréquence)
     """
     MeanDegree: float
     MeanClusterCoef: float
     Connexity: float
     Efficiency: float
+    DegreeDistribution: dict = None
 
 def swarm_to_graph(swarm, weighted_matrix=None):
     """Convertit un Swarm en graphe NetworkX.
@@ -40,6 +42,31 @@ def swarm_to_graph(swarm, weighted_matrix=None):
                     G.add_edge(i, j, weight=w)
         return G
     return swarm.swarm_to_nxgraph()
+
+def get_degree_distribution(G):
+    """Calcule la distribution des degrés d'un graphe.
+    
+    Args:
+        G: Graphe NetworkX
+        
+    Returns:
+        dict: Un dictionnaire où les clés sont les degrés et les valeurs sont les fréquences
+    """
+    if G.number_of_nodes() == 0:
+        return {}
+    
+    # Collecter tous les degrés
+    all_degrees = [d for _, d in G.degree()]
+    
+    # Compter les fréquences
+    degree_counts = {}
+    for d in all_degrees:
+        if d in degree_counts:
+            degree_counts[d] += 1
+        else:
+            degree_counts[d] = 1
+    
+    return degree_counts
 
 def get_mean_degree(G):
     """Calcule le degré moyen d'un graphe.
@@ -64,15 +91,22 @@ def get_mean_cluster_coef(G):
     return nx.average_clustering(G) if G.number_of_nodes() > 0 else 0
 
 def get_connexity(G):
-    """Vérifie si un graphe est connexe.
+    """Calcule la taille normalisée de la plus grande composante connexe.
     
     Args:
         G: Graphe NetworkX
         
     Returns:
-        float: 1.0 si connexe, 0.0 sinon
+        float: Taille de la plus grande composante divisée par le nombre total de nœuds (Gmax/N)
     """
-    return 1.0 if nx.number_connected_components(G) == 1 else 0.0
+    if G.number_of_nodes() == 0:
+        return 0.0
+        
+    # Trouver la plus grande composante connexe
+    largest_cc = max(nx.connected_components(G), key=len) if G.number_of_nodes() > 0 else set()
+    
+    # Calculer la taille normalisée (Gmax/N)
+    return len(largest_cc) / G.number_of_nodes()
 
 def get_efficiency(G):
     """Calcule l'efficience globale d'un graphe pondéré.
@@ -116,7 +150,8 @@ def analyze_single_graph(swarm, matrix):
         get_mean_degree(G_un),
         get_mean_cluster_coef(G_un),
         get_connexity(G_un),
-        get_efficiency(G_wt)
+        get_efficiency(G_wt),
+        get_degree_distribution(G_un)
     )
 
 def get_weighted_matrix(swarm, min_range, mid_range, max_range):
