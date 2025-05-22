@@ -36,6 +36,30 @@ try:
     print("- simulation.failure: OK")
 except ImportError as e:
     print(f"- simulation.failure: ERREUR - {e}")
+    
+try:
+    from protocols.base import DTNProtocol
+    print("- protocols.base: OK")
+except ImportError as e:
+    print(f"- protocols.base: ERREUR - {e}")
+
+try:
+    from protocols.spray_and_wait import SprayAndWait
+    print("- protocols.spray_and_wait: OK")
+except ImportError as e:
+    print(f"- protocols.spray_and_wait: ERREUR - {e}")
+    
+try:
+    from protocols.prophet import Prophet
+    print("- protocols.prophet: OK")
+except ImportError as e:
+    print(f"- protocols.prophet: ERREUR - {e}")
+    
+try:
+    from performance_metrics import PerformanceTracker, generate_comparative_table
+    print("- performance_metrics: OK")
+except ImportError as e:
+    print(f"- performance_metrics: ERREUR - {e}")
 
 try:
     from simulation.advanced_metrics import compute_advanced_metrics, analyze_advanced_robustness

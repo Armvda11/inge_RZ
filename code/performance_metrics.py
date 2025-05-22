@@ -263,7 +263,19 @@ def generate_comparative_table(results_list: List[Dict[str, Any]], table_format:
     Returns:
         str: Tableau formaté prêt à être affiché ou enregistré
     """
-    # Sélectionner les colonnes d'intérêt pour le tableau comparatif
+    # Vérifier s'il y a des résultats de type PRoPHET
+    has_prophet = any('protocol' in r and r.get('protocol') == 'PRoPHET' for r in results_list)
+    has_spray = any('protocol' in r and r.get('protocol') == 'Spray-and-Wait' for r in results_list)
+    
+    # Si les résultats contiennent à la fois Prophet et Spray-and-Wait, utiliser un format unifié
+    if has_prophet and has_spray:
+        return generate_protocol_comparison_table(results_list, table_format)
+    
+    # Si les résultats contiennent uniquement Prophet, adapter le tableau
+    if has_prophet:
+        return generate_prophet_table(results_list, table_format)
+    
+    # Par défaut, tableau pour Spray-and-Wait
     headers = [
         'L', 'Livré', 'Délai', 'Sauts', 'Total copies', 
         'Overhead', 'Débit', 'Résilience', 'Taux échec'
@@ -273,24 +285,129 @@ def generate_comparative_table(results_list: List[Dict[str, Any]], table_format:
     
     for result in results_list:
         delivered_str = "✅" if result.get('delivered', False) else "❌"
-        delay = result.get('delivery_delay', float('inf'))
-        delay_str = f"{delay:.1f}" if delay != float('inf') else "N/A"
+        delay = result.get('delivery_time', float('inf'))
+        if isinstance(delay, (int, float)):
+            delay_str = f"{delay:.1f}" if delay != float('inf') else "N/A"
+        else:
+            delay_str = str(delay)
         
         row = [
-            result['L'],
+            result.get('L', result.get('param', 'N/A')),
             delivered_str,
             delay_str,
-            result.get('hop_count', 'N/A'),
-            result.get('total_copies', 0),
+            result.get('hop_count', result.get('hops', 'N/A')),
+            result.get('total_copies', result.get('copies_created', 0)),
             f"{result.get('overhead_ratio', float('inf')):.2f}",
             f"{result.get('avg_throughput', 0):.2f}",
-            f"{result.get('resilience_score', 0):.2f}",
-            f"{result.get('avg_failure_rate', 0)*100:.1f}%"
+            f"{result.get('resilience', result.get('resilience_score', 0)):.2f}",
+            f"{result.get('avg_failure_rate', result.get('failure_rate', 0))*100:.1f}%"
         ]
         table_data.append(row)
     
     # Trier par L
-    table_data.sort(key=lambda x: x[0])
+    table_data.sort(key=lambda x: x[0] if isinstance(x[0], (int, float)) else 0)
+    
+    # Générer le tableau
+    return tabulate(table_data, headers=headers, tablefmt=table_format)
+
+def generate_prophet_table(results_list: List[Dict[str, Any]], table_format: str = 'pretty') -> str:
+    """
+    Génère un tableau comparatif pour les résultats du protocole PRoPHET.
+    
+    Args:
+        results_list (List[Dict]): Liste des résultats de différentes simulations
+        table_format (str): Format du tableau
+        
+    Returns:
+        str: Tableau formaté prêt à être affiché ou enregistré
+    """
+    headers = [
+        'P_init', 'Livré', 'Délai', 'Sauts', 'Total copies', 
+        'Overhead', 'Débit', 'Résilience', 'Taux échec'
+    ]
+    
+    table_data = []
+    
+    for result in results_list:
+        delivered_str = "✅" if result.get('delivered', False) else "❌"
+        delay = result.get('delivery_time', float('inf'))
+        if isinstance(delay, (int, float)):
+            delay_str = f"{delay:.1f}" if delay != float('inf') else "N/A"
+        else:
+            delay_str = str(delay)
+        
+        row = [
+            result.get('P_init', result.get('param', 'N/A')),
+            delivered_str,
+            delay_str,
+            result.get('hop_count', result.get('hops', 'N/A')),
+            result.get('total_copies', result.get('copies_created', 0)),
+            f"{result.get('overhead_ratio', float('inf')):.2f}",
+            f"{result.get('avg_throughput', 0):.2f}",
+            f"{result.get('resilience', result.get('resilience_score', 0)):.2f}",
+            f"{result.get('avg_failure_rate', result.get('failure_rate', 0))*100:.1f}%"
+        ]
+        table_data.append(row)
+    
+    # Trier par P_init
+    table_data.sort(key=lambda x: x[0] if isinstance(x[0], (int, float)) else 0)
+    
+    # Générer le tableau
+    return tabulate(table_data, headers=headers, tablefmt=table_format)
+
+def generate_protocol_comparison_table(results_list: List[Dict[str, Any]], table_format: str = 'pretty') -> str:
+    """
+    Génère un tableau comparatif pour les résultats des deux protocoles.
+    
+    Args:
+        results_list (List[Dict]): Liste des résultats de différentes simulations
+        table_format (str): Format du tableau
+        
+    Returns:
+        str: Tableau formaté prêt à être affiché ou enregistré
+    """
+    headers = [
+        'Protocole', 'Paramètre', 'Livré', 'Délai', 'Sauts', 'Total copies', 
+        'Overhead', 'Débit', 'Résilience', 'Taux échec'
+    ]
+    
+    table_data = []
+    
+    for result in results_list:
+        protocol_name = result.get('protocol', 'Inconnu')
+        param_name = str(result.get('param', 'N/A'))
+        
+        # Présentation du paramètre selon le protocole
+        if protocol_name == 'Spray-and-Wait':
+            param_label = f"L={param_name}"
+        elif protocol_name == 'PRoPHET':
+            param_label = f"P_init={param_name}"
+        else:
+            param_label = param_name
+            
+        delivered_str = "✅" if result.get('delivered', False) else "❌"
+        delay = result.get('delivery_time', float('inf'))
+        if isinstance(delay, (int, float)):
+            delay_str = f"{delay:.1f}" if delay != float('inf') else "N/A"
+        else:
+            delay_str = str(delay)
+        
+        row = [
+            protocol_name,
+            param_label,
+            delivered_str,
+            delay_str,
+            result.get('hop_count', result.get('hops', 'N/A')),
+            result.get('total_copies', result.get('copies_created', 0)),
+            f"{result.get('overhead_ratio', float('inf')):.2f}",
+            f"{result.get('avg_throughput', 0):.2f}",
+            f"{result.get('resilience', result.get('resilience_score', 0)):.2f}",
+            f"{result.get('avg_failure_rate', result.get('failure_rate', 0))*100:.1f}%"
+        ]
+        table_data.append(row)
+    
+    # Trier d'abord par protocole, puis par paramètre
+    table_data.sort(key=lambda x: (x[0], float(x[1].split('=')[1]) if '=' in x[1] else 0))
     
     # Générer le tableau
     return tabulate(table_data, headers=headers, tablefmt=table_format)
