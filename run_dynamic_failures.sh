@@ -16,11 +16,7 @@ if ! pip list | grep -q tabulate; then
     pip install tabulate
 fi
 
-# Pour l'export HTML
-if ! pip list | grep -q jinja2; then
-    echo "Installation de jinja2 pour l'export HTML..."
-    pip install jinja2
-fi
+
 
 # Exécuter le script
 cd code

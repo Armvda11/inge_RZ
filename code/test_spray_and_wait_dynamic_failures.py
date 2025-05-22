@@ -668,7 +668,7 @@ def test_spray_and_wait_with_dynamic_failures():
             if os.path.exists(best_metrics_file):
                 detailed_metrics_df = pd.read_csv(best_metrics_file)
                 
-                # Informations sur le protocole pour le rapport HTML
+                # Informations sur le protocole
                 protocol_info = {
                     'failure_mode': failure_mode,
                     'num_nodes': num_nodes,
@@ -677,16 +677,15 @@ def test_spray_and_wait_with_dynamic_failures():
                     'distribution_rate': distribution_rate
                 }
                 
-                # Exporter au format HTML
-                export_results_to_html(
-                    all_results,
-                    detailed_metrics_df,
-                    protocol_info,
-                    f"{output_dir}/rapport_detaille"
-                )
+                print("\nRésultats de la simulation :")
+                print("---------------------------")
+                print(f"Mode de panne : {failure_mode}")
+                print(f"Nombre de nœuds : {num_nodes}")
+                print(f"TTL : {ttl_value}")
+                print(f"Dilution du réseau : {network_dilution}")
+                print(f"Taux de distribution : {distribution_rate}")
             else:
                 print(f"\n⚠️ Impossible de trouver les métriques détaillées pour L={best_L}")
-                print(f"Le rapport HTML n'a pas pu être généré.")
         except Exception as e:
             print(f"\n⚠️ Erreur lors de la génération du rapport HTML: {str(e)}")
     
