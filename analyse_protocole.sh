@@ -27,7 +27,8 @@ echo -e "${YELLOW}Date: $(date)${NC}\n"
 echo -e "${BOLD}Choisissez le protocole à analyser:${NC}"
 echo -e "  ${GREEN}1.${NC} Protocole Spray-and-Wait (standard)"
 echo -e "  ${GREEN}2.${NC} Protocole Spray-and-Wait Multi-hop"
-echo -e "  ${GREEN}3.${NC} Retour au menu principal"
+echo -e "  ${GREEN}3.${NC} Protocole Spray-and-Wait Multi-hop avec pannes"
+echo -e "  ${GREEN}4.${NC} Retour au menu principal"
 echo -e "\n${BOLD}Votre choix:${NC}"
 read protocol_choice
 
@@ -67,7 +68,10 @@ case $protocol_choice in
         ;;
     2)
         echo -e "\n${BLUE}${BOLD}Exécution du test du protocole Spray-and-Wait Multi-hop...${NC}"
-        $PY_CMD test_spray_and_wait_multihop.py
+        echo -e "${YELLOW}Mode normal sans panne${NC}"
+        
+        # Prérégler la réponse à "none" pour le mode sans panne
+        echo "none" | $PY_CMD test_spray_and_wait_multihop.py
         
         if [ $? -eq 0 ]; then
             # Ouvrir le dossier des résultats
@@ -83,6 +87,41 @@ case $protocol_choice in
         fi
         ;;
     3)
+        echo -e "\n${BLUE}${BOLD}Exécution du test du protocole Spray-and-Wait Multi-hop avec simulation de pannes...${NC}"
+        echo -e "${YELLOW}Choisissez un mode de panne:${NC}"
+        echo -e "  ${GREEN}1.${NC} Pannes aléatoires (random)"
+        echo -e "  ${GREEN}2.${NC} Pannes ciblées des nœuds critiques (targeted)"
+        echo -e "  ${GREEN}3.${NC} Pannes régionales (region)"
+        echo -e "\n${BOLD}Votre choix:${NC}"
+        read failure_choice
+        
+        case $failure_choice in
+            1) failure_mode="random" ;;
+            2) failure_mode="targeted" ;;
+            3) failure_mode="region" ;;
+            *) 
+                echo -e "${RED}Choix invalide. Utilisation du mode aléatoire par défaut.${NC}"
+                failure_mode="random" 
+                ;;
+        esac
+        
+        echo -e "${YELLOW}Mode de panne sélectionné: ${failure_mode}${NC}"
+        echo "$failure_mode" | $PY_CMD test_spray_and_wait_multihop.py
+        
+        if [ $? -eq 0 ]; then
+            # Ouvrir le dossier des résultats
+            cd ..
+            echo -e "\n${GREEN}${BOLD}Test terminé avec succès!${NC}"
+            echo -e "${YELLOW}Résultats disponibles dans: ./data_logs/protocols/spray_and_wait_multihop_test_${failure_mode}_failure${NC}"
+            open "./data_logs/protocols/spray_and_wait_multihop_test_${failure_mode}_failure" 2>/dev/null || \
+            xdg-open "./data_logs/protocols/spray_and_wait_multihop_test_${failure_mode}_failure" 2>/dev/null || \
+            explorer "./data_logs/protocols/spray_and_wait_multihop_test_${failure_mode}_failure" 2>/dev/null
+        else
+            cd ..
+            echo -e "\n${RED}Erreur lors de l'exécution du test.${NC}"
+        fi
+        ;;
+    4)
         cd ..
         echo -e "\n${YELLOW}Retour au menu principal.${NC}"
         exit 0

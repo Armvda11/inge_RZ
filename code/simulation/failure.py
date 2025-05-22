@@ -5,7 +5,71 @@ from config import T_PRED, N_PRED, P_FAIL, OUTDIR
 import networkx as nx
 import matplotlib.pyplot as plt
 from simulation.metrics import get_importance, get_centrality, swarm_to_graph, analyze_single_graph, Metric
-from simulation.visualize_degree_dist import plot_degree_distribution, compare_degree_distributions
+
+def plot_degree_distribution(degree_distribution, title="Distribution des degrés", filename=None):
+    """Trace la distribution des degrés d'un graphe.
+    
+    Args:
+        degree_distribution: Un dictionnaire où les clés sont les degrés et les valeurs sont les fréquences
+        title: Le titre du graphique
+        filename: Nom du fichier pour sauvegarder le graphique (sans extension)
+    """
+    if not degree_distribution:
+        print("Pas de distribution de degrés à tracer")
+        return
+    
+    plt.figure(figsize=(10, 6))
+    degrees = list(degree_distribution.keys())
+    frequencies = list(degree_distribution.values())
+    
+    plt.bar(degrees, frequencies, color='royalblue', alpha=0.7)
+    plt.xlabel('Degré')
+    plt.ylabel('Fréquence')
+    plt.title(title)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    if filename:
+        plt.savefig(f"{OUTDIR}/topologie/{filename}.png", bbox_inches='tight')
+    plt.close()
+
+def compare_degree_distributions(dist1, dist2, event_name="événement", filename=None):
+    """Compare deux distributions de degrés (avant/après un événement).
+    
+    Args:
+        dist1: Distribution des degrés avant l'événement
+        dist2: Distribution des degrés après l'événement
+        event_name: Nom de l'événement pour le titre
+        filename: Nom du fichier pour sauvegarder le graphique (sans extension)
+    """
+    if not dist1 or not dist2:
+        print("Distributions de degrés incomplètes, impossible de comparer")
+        return
+    
+    # Combine keys from both distributions
+    all_degrees = sorted(set(list(dist1.keys()) + list(dist2.keys())))
+    
+    # Create arrays for plotting, filling in zeros for missing degrees
+    freq_before = [dist1.get(d, 0) for d in all_degrees]
+    freq_after = [dist2.get(d, 0) for d in all_degrees]
+    
+    plt.figure(figsize=(12, 6))
+    
+    x = np.arange(len(all_degrees))
+    width = 0.35
+    
+    plt.bar(x - width/2, freq_before, width, color='royalblue', alpha=0.7, label='Avant')
+    plt.bar(x + width/2, freq_after, width, color='firebrick', alpha=0.7, label='Après')
+    
+    plt.xlabel('Degré')
+    plt.ylabel('Fréquence')
+    plt.title(f'Distribution des degrés avant et après {event_name}')
+    plt.xticks(x, all_degrees)
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    if filename:
+        plt.savefig(f"{OUTDIR}/topologie/{filename}.png", bbox_inches='tight')
+    plt.close()
 
 class NodeFailureManager:
     """Gestionnaire de pannes de nœuds.

@@ -58,6 +58,10 @@ class SprayAndWait(DTNProtocol):
         self.copies_history = []  # Historique complet des copies à chaque étape
         self.delivery_history = []  # Historique des livraisons
         self.message_delivered = False  # Si le message a été livré à la destination
+        
+        # Nouveau compteur pour suivre toutes les copies créées/transmises
+        self.total_copies_created = L  # Initialiser avec le nombre initial
+        self.copy_transmissions = []  # Liste pour suivre chaque transmission
     
     def step(self, t: int, adjacency: dict[int, set[int]]):
         """
@@ -128,6 +132,9 @@ class SprayAndWait(DTNProtocol):
                     # Suivre quand cette copie a été créée
                     self.copies_created_at[j] = t
                     
+                    # Enregistrer la transmission pour le comptage des copies
+                    self.record_copy_transmission(i, j, to_give, t)
+                    
                     # Mise à jour du nombre de sauts et timestamp d'émission pour le nœud j
                     self.num_hops[j] = self.num_hops.get(i, 0) + 1
                     if j not in self.t_emit:
@@ -165,6 +172,26 @@ class SprayAndWait(DTNProtocol):
                         'num_hops': hops_to_dest
                     })
     
+    def record_copy_transmission(self, from_node: int, to_node: int, num_copies: int, t: int):
+        """
+        Enregistre une transmission de copies entre deux nœuds.
+        
+        Args:
+            from_node (int): Nœud qui envoie les copies
+            to_node (int): Nœud qui reçoit les copies
+            num_copies (int): Nombre de copies transmises
+            t (int): Temps de la transmission
+        """
+        self.copy_transmissions.append({
+            'time': t,
+            'from': from_node,
+            'to': to_node,
+            'copies': num_copies
+        })
+        
+        # Incrémenter le compteur total de copies créées
+        self.total_copies_created += num_copies
+    
     def delivery_ratio(self) -> float:
         """
         Calcule le ratio de livraison.
@@ -194,8 +221,10 @@ class SprayAndWait(DTNProtocol):
         Returns:
             float: Nombre de transmissions par message livré
         """
-        # Compter le nombre total de copies distribuées
-        total_copies = sum(self.copies.values())
+        # Utiliser le compteur total de copies créées au lieu des copies actuelles
+        # Cette valeur sera incrémentée à chaque transmission
+        total_copies = self.total_copies_created
+        
         # Livré ou pas
         delivered = 1 if self.dest in self.delivered_at else 0
         

@@ -1,4 +1,0 @@
-L,TTL,Distribution_Rate,delivered,delivery_time,total_copies,max_hops,destination_hops,overhead
-4,20,0.4,True,4,0,2,2,0.0
-8,20,0.4,True,4,0,2,2,0.0
-16,20,0.4,True,2,0,3,3,0.0

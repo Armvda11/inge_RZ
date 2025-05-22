@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
 import networkx as nx
+import random
 from matplotlib.colors import LinearSegmentedColormap
 
 # Ajouter le répertoire parent au chemin d'importation
@@ -19,6 +20,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import OUTDIR
 from protocols.spray_and_wait import SprayAndWait
+from simulation.failure import NodeFailureManager
 
 def create_multihop_network(t: int, num_nodes: int = 20, cluster_size: int = 5) -> dict[int, set[int]]:
     """
@@ -35,7 +37,6 @@ def create_multihop_network(t: int, num_nodes: int = 20, cluster_size: int = 5) 
     Returns:
         dict[int, set[int]]: Dictionnaire d'adjacence
     """
-    import random
     random.seed(42 + t)  # Seed pour reproductibilité, mais différente à chaque instant
     
     # Initialiser le réseau vide
@@ -212,7 +213,7 @@ def create_multihop_network(t: int, num_nodes: int = 20, cluster_size: int = 5) 
     
     return adjacency
 
-def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, int], delivered_at: dict, output_dir: str):
+def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, int], delivered_at: dict, output_dir: str, failed_nodes=None):
     """
     Visualise le réseau à un instant donné, montrant la distribution des copies.
     Améliore la visualisation avec une coloration graduelle selon le nombre de copies,
@@ -224,14 +225,21 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
         copies (dict): Nombre de copies par nœud
         delivered_at (dict): Dictionnaire des nœuds ayant reçu le message
         output_dir (str): Dossier de sortie pour les visualisations
+        failed_nodes (set): Ensemble des nœuds en panne
     """
     G = nx.Graph()
+    failed_nodes = failed_nodes or set()
     
     # Ajouter les nœuds et arêtes
     for node, neighbors in adjacency.items():
         G.add_node(node)
         for neighbor in neighbors:
             G.add_edge(node, neighbor)
+    
+    # Ajouter les nœuds en panne (même s'ils n'ont pas de connections)
+    for node in failed_nodes:
+        if node not in G:
+            G.add_node(node)
     
     # Préparer la visualisation
     plt.figure(figsize=(14, 10))
@@ -253,6 +261,7 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
     labels = {}
     edge_colors = []
     edge_widths = []
+    node_shapes = []  # Pour distinguer les nœuds en panne
     
     source = 0
     destination = max(adjacency.keys())
@@ -264,36 +273,51 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
     # Collecter les info sur les nœuds pour une meilleure visualisation
     for node in G.nodes():
         num_copies = copies.get(node, 0)
+        is_failed = node in failed_nodes
         
-        if node == source:
+        if is_failed:
+            # Nœuds en panne: noir avec une croix
+            node_colors.append('black')
+            labels[node] = f"X{node}"
+            node_shapes.append('x')
+        elif node == source:
             # Source: vert, avec nombre de copies
             node_colors.append('green')
             labels[node] = f"S:{num_copies}"
+            node_shapes.append('o')
         elif node == destination:
             # Destination: doré si livré, sinon rouge
             if node in delivered_at:
                 node_colors.append('gold')
                 labels[node] = f"D✓:{num_copies} (t={delivered_at[node]})"
+                node_shapes.append('o')
             else:
                 node_colors.append('red')
                 labels[node] = f"D:{num_copies}"
+                node_shapes.append('o')
         elif num_copies > 0:
             # Nœuds avec copies: gradient de bleu selon le nombre de copies
             # Plus le nœud a de copies, plus il est foncé
             intensity = min(1.0, 0.3 + 0.7 * (num_copies / max_copies))
             node_colors.append((0, 0, intensity))  # RGB pour bleu
             labels[node] = f"{node}:{num_copies}"
+            node_shapes.append('o')
         else:
             # Nœuds sans copies
             node_colors.append('lightgray')
             labels[node] = str(node)
+            node_shapes.append('o')
     
     # Déterminer les couleurs et épaisseurs des arêtes pour mieux visualiser les chemins
     # Les arêtes entre clusters sont plus épaisses
     for u, v in G.edges():
+        # Les arêtes qui touchent des nœuds en panne sont grises et très fines
+        if u in failed_nodes or v in failed_nodes:
+            edge_colors.append('gray')
+            edge_widths.append(0.2)
         # Vérifier si l'un des nœuds a des copies et l'autre non
         # Cela pourrait indiquer un chemin de diffusion potentiel
-        if (copies.get(u, 0) > 0 and copies.get(v, 0) == 0) or (copies.get(u, 0) == 0 and copies.get(v, 0) > 0):
+        elif (copies.get(u, 0) > 0 and copies.get(v, 0) == 0) or (copies.get(u, 0) == 0 and copies.get(v, 0) > 0):
             edge_colors.append('blue')  # Arête de diffusion potentielle
             edge_widths.append(2.0)
         # Arêtes entre nœuds avec copies
@@ -313,19 +337,53 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
     # Dessiner d'abord les arêtes avec les couleurs et épaisseurs calculées
     nx.draw_networkx_edges(G, pos, alpha=0.6, edge_color=edge_colors, width=edge_widths)
     
-    # Dessiner les nœuds avec un contour noir pour une meilleure visibilité
-    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors, 
-                         alpha=0.8, edgecolors='black', linewidths=1)
+    # Dessiner les nœuds avec des formes et couleurs différentes selon leur état
+    # Dessiner les nœuds réguliers (pas en panne)
+    nodes_list = list(G.nodes())
+    shapes = {'o': [], 'x': []}
+    colors = {'o': [], 'x': []}
+    sizes = {'o': [], 'x': []}
+    
+    # Trier les nœuds selon leurs formes
+    for i, node in enumerate(nodes_list):
+        if i < len(node_shapes):  # S'assurer que l'index est valide
+            shape = node_shapes[i]
+            shapes[shape].append(node)
+            colors[shape].append(node_colors[i])
+            sizes[shape].append(node_sizes[i])
+    
+    # Dessiner les nœuds réguliers (cercles)
+    if shapes['o']:
+        nx.draw_networkx_nodes(G, pos, nodelist=shapes['o'], 
+                             node_size=sizes['o'], 
+                             node_color=colors['o'], 
+                             alpha=0.8, 
+                             edgecolors='black', 
+                             linewidths=1)
+    
+    # Dessiner les nœuds en panne (X)
+    if shapes['x']:
+        nx.draw_networkx_nodes(G, pos, nodelist=shapes['x'], 
+                             node_size=sizes['x'], 
+                             node_color=colors['x'], 
+                             alpha=0.8, 
+                             edgecolors='black', 
+                             linewidths=1, 
+                             node_shape='x')
     
     # Ajuster les labels pour une meilleure visibilité selon la couleur du nœud
-    for node, color in zip(G.nodes(), node_colors):
-        # Déterminer si le fond du nœud est foncé
-        is_dark = isinstance(color, tuple) or color in ['green', 'blue', 'darkblue']
-        
-        # Dessiner chaque label individuellement avec la couleur de texte adaptée
-        nx.draw_networkx_labels(G, pos, {node: labels[node]}, 
-                             font_size=10, 
-                             font_color="white" if is_dark else "black")
+    for i, node in enumerate(G.nodes()):
+        if i < len(node_colors):  # S'assurer que l'index est valide
+            color = node_colors[i]
+            # Déterminer si le fond du nœud est foncé
+            is_dark = isinstance(color, tuple) or color in ['green', 'blue', 'darkblue', 'black']
+            
+            # S'assurer que le nœud a un label
+            if node in labels:
+                # Dessiner chaque label individuellement avec la couleur de texte adaptée
+                nx.draw_networkx_labels(G, pos, {node: labels[node]}, 
+                                     font_size=10, 
+                                     font_color="white" if is_dark else "black")
     
     plt.title(f"État du réseau à t={t}", fontsize=16)
     plt.axis('off')
@@ -338,6 +396,7 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
     
     status_text = (f"Nœuds actifs: {active_nodes}/{len(G.nodes())}\n"
                   f"Copies totales: {total_copies}\n"
+                  f"Nœuds en panne: {len(failed_nodes)}\n"
                   f"Message: {delivery_info}")
     
     plt.figtext(0.02, 0.02, status_text, fontsize=12, 
@@ -350,6 +409,7 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
         plt.Line2D([0], [0], marker='o', color='w', label='Destination livrée', markersize=15, markerfacecolor='gold'),
         plt.Line2D([0], [0], marker='o', color='w', label='Relais avec copies', markersize=15, markerfacecolor='blue'),
         plt.Line2D([0], [0], marker='o', color='w', label='Nœud sans copie', markersize=15, markerfacecolor='lightgray'),
+        plt.Line2D([0], [0], marker='x', color='black', label='Nœud en panne', markersize=15, markerfacecolor='black'),
         plt.Line2D([0], [0], color='darkblue', linewidth=2, label='Lien entre nœuds actifs'),
         plt.Line2D([0], [0], color='blue', linewidth=2, label='Lien de diffusion potentiel')
     ]
@@ -364,25 +424,133 @@ def visualize_network(adjacency: dict[int, set[int]], t: int, copies: dict[int, 
 
 def test_spray_and_wait_multihop():
     """
-    Test du protocole Spray-and-Wait dans un scénario multi-sauts.
-    Ce test simule un environnement où le message doit traverser plusieurs
-    nœuds intermédiaires avant d'atteindre la destination.
+    Test du protocole Spray-and-Wait dans un scénario multi-sauts avec simulation de pannes.
+    Ce test évalue l'impact de différents modes de pannes sur les métriques de performance:
+    - Taux de livraison (Delivery Ratio)
+    - Délai moyen de livraison (Average Delivery Delay)
+    - Surcharge de copies (Overhead Ratio)
+    - Nombre moyen de sauts (Hop Count)
+    
+    Le test permet d'exécuter un seul mode ou tous les modes de panne pour comparaison.
     """
     print("=== Test du protocole Spray-and-Wait en scénario multi-sauts ===")
+    print("Évaluation des performances avec métriques DTN avancées")
     
     # Paramètres de simulation
     num_nodes = 20
     max_steps = 50  # Plus d'étapes pour observer l'évolution complète même après livraison
-    L_values = [4, 8, 16]  # Nombre initial de copies
+    L_values = [2, 4, 8]  # Nombre initial de copies réduit pour mieux voir l'effet des pannes
     ttl_value = 20  # Time-to-Live pour les copies (en pas de temps)
-    distribution_rate = 0.4  # Taux de distribution des copies (ralentir la diffusion significativement)
+    distribution_rate = 0.2  # Taux de distribution des copies très ralenti pour mieux voir l'effet des pannes
     
-    # Dossier de sortie
-    output_dir = f"{OUTDIR}/protocols/spray_and_wait_multihop_test"
-    os.makedirs(output_dir, exist_ok=True)
+    # Paramètres de simulation de pannes
+    enable_failures = True
     
-    # Stocker les résultats pour chaque valeur de L
-    results = []
+    # Option pour exécuter toutes les simulations ou choisir un mode spécifique
+    print("Options de simulation des pannes:")
+    print("1. Un seul mode de panne")
+    print("2. Tous les modes de panne (pour comparaison)")
+    choice = input("Entrez votre choix (1/2) [1]: ").strip() or "1"
+    
+    valid_modes = ["none", "random", "targeted", "region"]
+    failure_modes_to_run = []
+    
+    if choice == "1":
+        # Demander le mode de panne avec gestion d'erreur
+        while True:
+            failure_mode = input(f"Choisissez un mode de panne ({'/'.join(valid_modes)}) [none]: ").strip().lower() or "none"
+            if failure_mode in valid_modes:
+                failure_modes_to_run = [failure_mode]
+                break
+            else:
+                print(f"Mode invalide. Veuillez choisir parmi: {', '.join(valid_modes)}")
+    else:
+        # Exécuter tous les modes de panne pour comparaison
+        failure_modes_to_run = valid_modes
+        print(f"Exécution de tous les modes de panne: {', '.join(valid_modes)}")
+    
+    # Détermine quand les pannes commencent (très tôt dans la simulation, à t=2)
+    # Cela permet aux pannes d'avoir un réel impact sur la livraison des messages
+    failure_time = 2
+    
+    # Pour stocker les résultats de tous les modes de simulation
+    all_results = []
+    
+    # Dossier de sortie principal
+    main_output_dir = f"{OUTDIR}/protocols/spray_and_wait_multihop_test"
+    os.makedirs(main_output_dir, exist_ok=True)
+    
+    # Pour chaque mode de panne sélectionné
+    for failure_mode in failure_modes_to_run:
+        print(f"\n{'='*70}")
+        print(f"=== EXÉCUTION DU MODE DE PANNE: {failure_mode.upper()}")
+        print(f"{'='*70}\n")
+        
+        # Si le mode est "none", désactiver les pannes
+        enable_failures = failure_mode != "none"
+        
+        # Dossier de sortie spécifique au mode
+        output_dir = f"{main_output_dir}"
+        if failure_mode != "none":
+            output_dir += f"_{failure_mode}_failure"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Stocker les résultats pour chaque valeur de L
+        results = []
+        
+        # Initialiser les positions des nœuds pour le gestionnaire de pannes
+        positions = {}
+        adjacency_initial = create_multihop_network(0, num_nodes)
+        G = nx.Graph()
+        for node, neighbors in adjacency_initial.items():
+            G.add_node(node)
+            for neighbor in neighbors:
+                G.add_edge(node, neighbor)
+        pos = nx.spring_layout(G, seed=42)
+        positions = {node: (x, y) for node, (x, y) in pos.items()}
+        
+        # Initialiser le gestionnaire de pannes
+        failure_manager = NodeFailureManager(positions)
+        
+        # Configurer les pannes selon le mode choisi
+        if enable_failures:
+            # Stocker les nœuds qui vont tomber en panne pour une utilisation dans la boucle principale
+            nodes_to_fail = []
+            
+            if failure_mode == "random":
+                # Pannes aléatoires: 20% des nœuds tombent en panne à t=failure_time
+                # Exclure source et destination pour ne pas bloquer complètement la propagation
+                failure_nodes = random.sample(list(range(1, num_nodes-1)), num_nodes // 5)
+                print(f"Nœuds qui tomberont en panne à t={failure_time}: {failure_nodes}")
+                nodes_to_fail = failure_nodes
+                for node in failure_nodes:
+                    failure_manager.failure_times[node] = failure_time
+            
+            elif failure_mode == "targeted":
+                # Pannes ciblées: trouver les nœuds avec le plus haut degré (centraux)
+                degrees = {node: len(neighbors) for node, neighbors in adjacency_initial.items()}
+                sorted_nodes = sorted(degrees.items(), key=lambda x: x[1], reverse=True)
+                
+                # Cibler les 3 nœuds les plus connectés, excluant source et destination
+                targeted_nodes = [node for node, degree in sorted_nodes if node != 0 and node != num_nodes-1][:3]
+                print(f"Nœuds centraux qui tomberont en panne à t={failure_time}: {targeted_nodes}")
+                nodes_to_fail = targeted_nodes
+                for node in targeted_nodes:
+                    failure_manager.failure_times[node] = failure_time
+            
+            elif failure_mode == "region":
+                # Pannes régionales: choisir un nœud et ses voisins
+                # Trouver un nœud central (pas la source ni la destination)
+                potential_central_nodes = [n for n in range(1, num_nodes-1) if n != 0 and n != num_nodes-1]
+                if potential_central_nodes:
+                    central_node = random.choice(potential_central_nodes)
+                    region_nodes = [central_node] + list(adjacency_initial[central_node])
+                    # Filtrer pour ne pas inclure la source ou la destination
+                    region_nodes = [n for n in region_nodes if n != 0 and n != num_nodes-1]
+                    print(f"Région de pannes à t={failure_time}: {region_nodes}")
+                    nodes_to_fail = region_nodes
+                    for node in region_nodes:
+                        failure_manager.failure_times[node] = failure_time
     
     # Tester différentes valeurs de L
     for L in L_values:
@@ -392,16 +560,29 @@ def test_spray_and_wait_multihop():
         protocol = SprayAndWait(num_nodes, L, destination, source, binary=True, 
                                ttl=ttl_value, distribution_rate=distribution_rate)
         
+        # Réinitialiser le gestionnaire de pannes pour chaque test avec une valeur L différente
+        failure_manager.failed_nodes = set()
+        
+        # Si c'est la première itération, afficher les informations sur le mode de panne
+        if L == L_values[0] and enable_failures:
+            print(f"\n--- Mode de panne: {failure_mode.upper()} ---")
+            print(f"Les pannes se produiront à t={failure_time}")
+            if hasattr(failure_manager, 'failure_times'):
+                affected_nodes = sorted(failure_manager.failure_times.keys())
+                print(f"Nœuds qui seront affectés: {affected_nodes}")
+            print("---")
+        
         # Suivi de la distribution des copies
         copies_history = []
         hops_logs = []
         active_copies_over_time = []  # Pour suivre l'évolution du nombre de copies actives
+        failed_nodes_over_time = []   # Pour suivre l'évolution des pannes
         
         # Exécuter la simulation
-        print(f"\nTest multi-sauts avec L={L}, TTL={ttl_value}, Rate={distribution_rate:.2f}:")
+        print(f"\nTest multi-sauts avec L={L}, TTL={ttl_value}, Rate={distribution_rate:.2f}, Mode de panne: {failure_mode}")
         print(f"Source: {source}, Destination: {destination}")
-        print(f"{'t':>3} | {'Copies actives':^15} | {'Nœuds avec copies':^20} | {'Livré':<7}")
-        print("-" * 70)
+        print(f"{'t':>3} | {'Copies actives':^15} | {'Nœuds avec copies':^20} | {'Nœuds en panne':^15} | {'Livré':<7}")
+        print("-" * 90)
         
         # Conserver l'état de livraison pour savoir quand la livraison a eu lieu
         delivery_occurred = False
@@ -411,8 +592,53 @@ def test_spray_and_wait_multihop():
             # Générer le réseau pour l'instant t
             adjacency = create_multihop_network(t, num_nodes)
             
+            # Appliquer les pannes si nécessaire
+            if enable_failures and failure_mode != "none":
+                # Mettre à jour les nœuds en panne au temps défini
+                if t == failure_time:
+                    print(f"Activation des pannes à t={t}")
+                    for node, fail_time in failure_manager.failure_times.items():
+                        if t >= fail_time:
+                            # Vérifier que ni la source ni la destination ne tombent en panne
+                            if node != source and node != destination:
+                                failure_manager.failed_nodes.add(node)
+                
+                # Appliquer l'effet des pannes sur le réseau à chaque pas de temps
+                if failure_manager.failed_nodes:
+                    # Créer une copie du dictionnaire d'adjacence
+                    adjacency_with_failures = {}
+                    for node, neighbors in adjacency.items():
+                        adjacency_with_failures[node] = neighbors.copy()
+                    
+                    # Supprimer les connexions des nœuds en panne
+                    for node in failure_manager.failed_nodes:
+                        if node in adjacency_with_failures:
+                            # Le nœud ne peut plus communiquer
+                            adjacency_with_failures[node] = set()
+                            # Supprimer le nœud des listes d'adjacence des autres nœuds
+                            for other, neighbors in adjacency_with_failures.items():
+                                if node in neighbors:
+                                    neighbors.remove(node)
+                                    
+                    # Remplacer le dictionnaire d'adjacence original par celui modifié avec les pannes
+                    adjacency = adjacency_with_failures
+                    
+                    # Si c'est la première fois que les pannes sont activées pour cette valeur de L
+                    if t == failure_time:
+                        num_copies_lost = 0
+                        # Vérifier quels nœuds en panne avaient des copies du message
+                        for node in failure_manager.failed_nodes:
+                            if protocol.copies.get(node, 0) > 0:
+                                num_copies_lost += protocol.copies[node]
+                                # Mettre à jour le nombre de copies (les copies dans les nœuds en panne sont perdues)
+                                protocol.copies[node] = 0
+                        
+                        if num_copies_lost > 0:
+                            print(f"Attention: {num_copies_lost} copies ont été perdues à cause des pannes!")
+            
             # Avant de faire un pas, enregistrer l'état actuel
             copies_history.append(protocol.copies.copy())
+            failed_nodes_over_time.append(len(failure_manager.failed_nodes))
             
             # Compter les copies actives avant l'étape
             active_copies = sum(1 for _, c in protocol.copies.items() if c > 0)
@@ -421,7 +647,8 @@ def test_spray_and_wait_multihop():
             # Visualiser le réseau à certains instants-clés ou quand le message est livré
             should_visualize = t % 4 == 0 or t == max_steps - 1
             if should_visualize or (protocol.dest in protocol.delivered_at and not delivery_occurred):
-                visualize_network(adjacency, t, protocol.copies, protocol.delivered_at, output_dir)
+                visualize_network(adjacency, t, protocol.copies, protocol.delivered_at, output_dir, 
+                                 failed_nodes=failure_manager.failed_nodes)
             
             # Exécuter un pas de simulation
             protocol.step(t, adjacency)
@@ -435,10 +662,14 @@ def test_spray_and_wait_multihop():
             nodes_with_copies = [n for n, c in protocol.copies.items() if c > 0]
             total_active_copies = sum(protocol.copies.values())
             
+            # Utiliser le compteur total de copies créées
+            total_copies_created = protocol.total_copies_created
+            
             # Afficher l'état actuel
             delivered = protocol.dest in protocol.delivered_at
             delivered_str = f"Oui (t={protocol.delivered_at.get(protocol.dest, 'N/A')})" if delivered else "Non"
-            print(f"{t:3d} | {total_active_copies:^15d} | {', '.join(map(str, nodes_with_copies)):^20} | {delivered_str:<7}")
+            failed_str = ', '.join(map(str, sorted(failure_manager.failed_nodes))) if failure_manager.failed_nodes else "-"
+            print(f"{t:3d} | {total_active_copies:^15d} | {', '.join(map(str, nodes_with_copies)):^20} | {failed_str:^15} | {delivered_str:<7}")
             
             # Enregistrer les données de sauts pour analyse
             if protocol.num_hops:
@@ -484,27 +715,59 @@ def test_spray_and_wait_multihop():
             plt.yticks(range(num_nodes), [str(i) for i in range(num_nodes)])
             plt.xticks(range(0, len(df_copies), 5), [str(i) for i in range(0, len(df_copies), 5)])
             
-            # Marquer le moment de la livraison
+            # Marquer le moment de la livraison et les pannes
+            lines = []
             if delivery_occurred:
-                plt.axvline(x=delivery_time, color='red', linestyle='--', label=f"Livraison à t={delivery_time}")
+                lines.append((delivery_time, 'red', '--', f"Livraison à t={delivery_time}"))
+            
+            if enable_failures and failure_mode != "none" and failure_time < len(df_copies):
+                lines.append((failure_time, 'orange', ':', f"Début des pannes à t={failure_time}"))
+            
+            for time, color, style, label in lines:
+                plt.axvline(x=time, color=color, linestyle=style, label=label)
+            
+            if lines:
                 plt.legend()
             
             # Sauvegarder la figure
             plt.savefig(f"{output_dir}/heatmap_L{L}.png", dpi=300, bbox_inches='tight')
             plt.close()
             
-            # Visualiser l'évolution du nombre de copies actives au fil du temps
-            plt.figure(figsize=(10, 6))
-            plt.plot(range(len(active_copies_over_time)), active_copies_over_time, 'b-', linewidth=2)
-            plt.title(f"Évolution du nombre de nœuds avec des copies (L={L}, TTL={ttl_value})")
-            plt.xlabel("Temps (t)")
-            plt.ylabel("Nombre de nœuds avec copies")
-            plt.grid(True, alpha=0.3)
+            # Visualiser l'évolution du nombre de copies actives au fil du temps et des pannes
+            fig, ax1 = plt.subplots(figsize=(10, 6))
+            
+            # Tracer l'évolution des copies actives
+            ax1.plot(range(len(active_copies_over_time)), active_copies_over_time, 'b-', linewidth=2, label="Nœuds avec copies")
+            ax1.set_xlabel("Temps (t)")
+            ax1.set_ylabel("Nombre de nœuds avec copies", color='b')
+            ax1.tick_params(axis='y', labelcolor='b')
+            
+            # Si des pannes sont activées, ajouter un deuxième axe pour les pannes
+            if enable_failures and failure_mode != "none":
+                ax2 = ax1.twinx()
+                ax2.plot(range(len(failed_nodes_over_time)), failed_nodes_over_time, 'r--', linewidth=2, label="Nœuds en panne")
+                ax2.set_ylabel("Nombre de nœuds en panne", color='r')
+                ax2.tick_params(axis='y', labelcolor='r')
+                ax2.set_ylim(bottom=0)  # S'assurer que l'axe commence à 0
+                
+                # Marquer le début des pannes
+                if failure_time < len(active_copies_over_time):
+                    ax1.axvline(x=failure_time, color='orange', linestyle=':', label=f"Début des pannes à t={failure_time}")
             
             # Marquer le moment de la livraison
-            if delivery_occurred:
-                plt.axvline(x=delivery_time, color='red', linestyle='--', label=f"Livraison à t={delivery_time}")
-                plt.legend()
+            if delivery_occurred and delivery_time < len(active_copies_over_time):
+                ax1.axvline(x=delivery_time, color='green', linestyle='--', label=f"Livraison à t={delivery_time}")
+            
+            # Combiner les légendes des deux axes
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            if enable_failures and failure_mode != "none":
+                lines2, labels2 = ax2.get_legend_handles_labels()
+                ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
+            else:
+                ax1.legend(loc="best")
+            
+            plt.title(f"Impact des pannes sur la distribution des copies (L={L}, TTL={ttl_value})")
+            plt.grid(True, alpha=0.3)
             
             plt.savefig(f"{output_dir}/active_copies_L{L}.png", dpi=300, bbox_inches='tight')
             plt.close()
@@ -539,29 +802,40 @@ def test_spray_and_wait_multihop():
             plt.ylabel("Nombre de sauts")
             plt.grid(True, alpha=0.3)
             
-            # Marquer le moment de la livraison
+            # Marquer le moment de la livraison et des pannes
             if delivery_occurred:
-                plt.axvline(x=delivery_time, color='red', linestyle='--', label=f"Livraison à t={delivery_time}")
+                plt.axvline(x=delivery_time, color='green', linestyle='--', label=f"Livraison à t={delivery_time}")
+            
+            if enable_failures and failure_mode != "none":
+                plt.axvline(x=failure_time, color='orange', linestyle=':', label=f"Début des pannes à t={failure_time}")
             
             # N'afficher dans la légende que la destination et quelques autres nœuds représentatifs
             handles, labels = plt.gca().get_legend_handles_labels()
             # Filtrer pour ne montrer que les 5 premiers nœuds + la destination si présente
             dest_indices = [i for i, label in enumerate(labels) if "Destination" in label]
             delivery_idx = [i for i, label in enumerate(labels) if "Livraison" in label]
+            failure_idx = [i for i, label in enumerate(labels) if "pannes" in label]
             
-            if dest_indices and len(handles) > 6:
-                # Si la destination est présente dans les labels
-                dest_idx = dest_indices[0] 
-                selected_idx = list(range(min(5, len(handles)))) + ([dest_idx] if dest_idx >= 5 else [])
-                # Ajouter la ligne de livraison si présente
-                if delivery_idx:
-                    selected_idx += delivery_idx
-                # S'assurer qu'il n'y a pas de doublons dans les indices
-                selected_idx = sorted(set(selected_idx))
-                plt.legend([handles[i] for i in selected_idx], [labels[i] for i in selected_idx])
+            selected_idx = []
+            if dest_indices:
+                selected_idx += dest_indices
+            if delivery_idx:
+                selected_idx += delivery_idx
+            if failure_idx:
+                selected_idx += failure_idx
+            
+            # Ajouter quelques nœuds représentatifs
+            other_nodes = [i for i, label in enumerate(labels) 
+                         if "Nœud" in label and i not in dest_indices][:3]  # Max 3 autres nœuds
+            selected_idx += other_nodes
+            
+            # S'assurer qu'il n'y a pas de doublons dans les indices
+            selected_idx = sorted(set(selected_idx))
+            
+            if selected_idx:
+                plt.legend([handles[i] for i in selected_idx], [labels[i] for i in selected_idx], loc="best")
             else:
-                # Sinon juste afficher les 5 premiers ou tous s'il y en a moins de 5
-                plt.legend(loc='best')
+                plt.legend(loc="best")
             
             plt.savefig(f"{output_dir}/hops_evolution_L{L}.png", dpi=300, bbox_inches='tight')
             plt.close()
@@ -570,77 +844,190 @@ def test_spray_and_wait_multihop():
             destination_hops = hop_stats.get('destination', None)
         
         # Enregistrer les résultats
-        total_copies = sum(protocol.copies.values())
+        # Utiliser le nouveau compteur total_copies_created au lieu de la somme des copies actuelles
+        total_copies = protocol.total_copies_created
         results.append({
             'L': L,
             'TTL': ttl_value,
             'Distribution_Rate': distribution_rate,
+            'Failure_Mode': failure_mode,
             'delivered': destination in protocol.delivered_at,
             'delivery_time': protocol.delivered_at.get(destination, float('inf')),
             'total_copies': total_copies,
             'max_hops': max_hops,
             'destination_hops': destination_hops if destination_hops is not None else 'N/A',
-            'overhead': total_copies / (1 if delivery_ratio == 0 else delivery_ratio)
+            'overhead': total_copies / (1 if delivery_ratio == 0 else delivery_ratio),
+            'num_failed_nodes': len(failure_manager.failed_nodes)
         })
         
-        print(f"\nRésultats pour L={L}, TTL={ttl_value}, Rate={distribution_rate:.2f}:")
+        print(f"\nRésultats pour L={L}, TTL={ttl_value}, Rate={distribution_rate:.2f}, Mode de panne: {failure_mode}:")
         if delivery_ratio > 0:
-            print(f"  - Message livré: Oui")
+            print(f"  - Taux de livraison (DR): {delivery_ratio:.2f}")
             print(f"  - Délai de livraison: {delivery_delay}")
-            print(f"  - Nombre total de copies créées: {total_copies}")
-            print(f"  - Nombre maximum de sauts: {max_hops}")
+            print(f"  - Surcharge (OH): {total_copies:.0f} copies / {delivery_ratio:.0f} message = {total_copies/delivery_ratio:.2f}")
             print(f"  - Nombre de sauts pour la destination: {destination_hops if destination_hops is not None else 'N/A'}")
+            print(f"  - Détails: Message livré en {delivery_delay} unités de temps avec {total_copies} copies créées")
         else:
-            print(f"  - Message non livré dans le délai imparti")
+            print(f"  - Taux de livraison (DR): 0.00 (échec)")
+            print(f"  - Délai de livraison: ∞ (message non livré)")
+            print(f"  - Surcharge (OH): ∞ (impossible à calculer)")
             print(f"  - Nombre total de copies créées: {total_copies}")
             print(f"  - Nombre maximum de sauts observés: {max_hops}")
     
-    # Créer un tableau comparatif
-    if results:
-        df_results = pd.DataFrame(results)
-        print("\nTableau comparatif:")
-        print(df_results.to_string(index=False))
+        # Créer un tableau comparatif pour ce mode
+        if results:
+            # Ajouter les résultats au tableau global pour comparaison ultérieure
+            for result in results:
+                result_copy = result.copy()
+                result_copy['failure_mode'] = failure_mode
+                all_results.append(result_copy)
+            
+            df_results = pd.DataFrame(results)
+            print("\nTableau comparatif pour le mode de panne", failure_mode.upper())
+            print(df_results.to_string(index=False))
+            
+            # Sauvegarder les résultats en CSV
+            csv_filename = f"resultats_multihop_{failure_mode}.csv"
+            df_results.to_csv(f"{output_dir}/{csv_filename}", index=False)
+            print(f"Résultats sauvegardés dans {output_dir}/{csv_filename}")
+            
+            # Calculer des métriques avancées
+            df_results['delivery_ratio'] = df_results['delivered'].apply(lambda x: 1.0 if x else 0.0)  # Taux de livraison
+            df_results['delivery_delay'] = df_results['delivery_time'].apply(lambda x: x if x != float('inf') else 0)  # Délai moyen
+            df_results['overhead_ratio'] = df_results['total_copies'] / df_results.apply(
+                lambda row: 1 if row['delivered'] else float('inf'), axis=1)  # OH = copies/messages_livrés
+            
+            # Convertir hop count en numérique
+            df_results['hop_count'] = pd.to_numeric(df_results['destination_hops'], errors='coerce')
+            
+            # Créer des graphiques comparatifs avec des courbes au lieu des barres
+            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+            
+            # 1. Taux de livraison vs L
+            axes[0, 0].plot(df_results['L'], df_results['delivery_ratio'], 'o-', linewidth=2, color='green', markersize=8)
+            axes[0, 0].set_title('Taux de livraison (Delivery Ratio)')
+            axes[0, 0].set_xlabel('L (nombre initial de copies)')
+            axes[0, 0].set_ylabel('DR = messages livrés/émis')
+            axes[0, 0].set_ylim([0, 1.1])  # Entre 0 et 1 avec un peu de marge
+            axes[0, 0].grid(True, alpha=0.3)
+            
+            # 2. Délai de livraison vs L
+            axes[0, 1].plot(df_results['L'], df_results['delivery_delay'], 'o-', linewidth=2, color='blue', markersize=8)
+            axes[0, 1].set_title('Délai moyen de livraison')
+            axes[0, 1].set_xlabel('L (nombre initial de copies)')
+            axes[0, 1].set_ylabel('Délai (unités de temps)')
+            axes[0, 1].grid(True, alpha=0.3)
+            
+            # 3. Surcharge de copies (Overhead) vs L
+            axes[1, 0].plot(df_results['L'], df_results['overhead_ratio'], 'o-', linewidth=2, color='red', markersize=8)
+            axes[1, 0].set_title('Surcharge de copies (Overhead Ratio)')
+            axes[1, 0].set_xlabel('L (nombre initial de copies)')
+            axes[1, 0].set_ylabel('OH = copies créées/messages livrés')
+            axes[1, 0].grid(True, alpha=0.3)
+            
+            # 4. Nombre moyen de sauts vs L
+            axes[1, 1].plot(df_results['L'], df_results['hop_count'], 'o-', linewidth=2, color='purple', markersize=8)
+            axes[1, 1].set_title('Nombre moyen de sauts (Hop Count)')
+            axes[1, 1].set_xlabel('L (nombre initial de copies)')
+            axes[1, 1].set_ylabel('Nombre de sauts')
+            axes[1, 1].grid(True, alpha=0.3)
+            
+            # Ajouter les valeurs numériques sur chaque point des courbes
+            for ax in axes.flat:
+                for line in ax.get_lines():
+                    x_data, y_data = line.get_data()
+                    for x, y in zip(x_data, y_data):
+                        if not np.isnan(y) and not np.isinf(y):  # S'assurer que la valeur n'est pas NaN ou inf
+                            ax.annotate(f'{y:.2f}', (x, y), textcoords="offset points", 
+                                       xytext=(0,5), ha='center', fontweight='bold')
+            
+            plt.tight_layout()
+            fig_filename = f"comparaison_multihop_{failure_mode}.png"
+            plt.savefig(f"{output_dir}/{fig_filename}", dpi=300)
+            print(f"Graphique comparatif sauvegardé dans {output_dir}/{fig_filename}")
+    
+    # À la fin de toutes les simulations, créer un graphique comparatif global
+    if len(all_results) > 0 and len(failure_modes_to_run) > 1:
+        print("\n\n" + "="*80)
+        print("COMPARAISON DE TOUS LES MODES DE PANNE")
+        print("="*80)
         
-        # Sauvegarder les résultats en CSV
-        df_results.to_csv(f"{output_dir}/resultats_multihop.csv", index=False)
-        print(f"Résultats sauvegardés dans {output_dir}/resultats_multihop.csv")
+        # Convertir tous les résultats en DataFrame
+        df_all = pd.DataFrame(all_results)
         
-        # Créer des graphiques comparatifs
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        # Calculer des métriques avancées
+        df_all['delivery_ratio'] = df_all['delivered'].apply(lambda x: 1.0 if x else 0.0)
+        df_all['delivery_delay'] = df_all['delivery_time'].apply(lambda x: x if x != float('inf') else 0)
+        df_all['overhead_ratio'] = df_all['total_copies'] / df_all.apply(
+            lambda row: 1 if row['delivered'] else float('inf'), axis=1)
+        df_all['hop_count'] = pd.to_numeric(df_all['destination_hops'], errors='coerce')
         
-        # 1. Délai de livraison vs L
-        axes[0, 0].bar(df_results['L'].astype(str), df_results['delivery_time'])
-        axes[0, 0].set_title('Délai de livraison')
-        axes[0, 0].set_xlabel('L (nombre initial de copies)')
-        axes[0, 0].set_ylabel('Temps')
+        # Sauvegarder les résultats globaux en CSV
+        df_all.to_csv(f"{main_output_dir}/resultats_multihop_tous_modes.csv", index=False)
+        
+        # Créer un graphique comparatif global
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        
+        # Palette de couleurs pour différencier les modes de panne
+        colors = {'none': 'green', 'random': 'red', 'targeted': 'blue', 'region': 'purple'}
+        markers = {'none': 'o', 'random': 's', 'targeted': '^', 'region': 'D'}
+        
+        # Regrouper par mode de panne et L
+        for failure_mode in failure_modes_to_run:
+            df_mode = df_all[df_all['failure_mode'] == failure_mode]
+            
+            # Trier par L pour avoir des courbes cohérentes
+            df_mode = df_mode.sort_values('L')
+            
+            # 1. Taux de livraison
+            axes[0, 0].plot(df_mode['L'], df_mode['delivery_ratio'], 
+                          marker=markers[failure_mode], linestyle='-', linewidth=2, 
+                          color=colors[failure_mode], markersize=8, label=failure_mode.capitalize())
+            
+            # 2. Délai de livraison
+            axes[0, 1].plot(df_mode['L'], df_mode['delivery_delay'], 
+                          marker=markers[failure_mode], linestyle='-', linewidth=2, 
+                          color=colors[failure_mode], markersize=8, label=failure_mode.capitalize())
+            
+            # 3. Surcharge (Overhead)
+            axes[1, 0].plot(df_mode['L'], df_mode['overhead_ratio'], 
+                          marker=markers[failure_mode], linestyle='-', linewidth=2, 
+                          color=colors[failure_mode], markersize=8, label=failure_mode.capitalize())
+            
+            # 4. Nombre de sauts
+            axes[1, 1].plot(df_mode['L'], df_mode['hop_count'], 
+                          marker=markers[failure_mode], linestyle='-', linewidth=2, 
+                          color=colors[failure_mode], markersize=8, label=failure_mode.capitalize())
+        
+        # Titres et labels
+        axes[0, 0].set_title('Taux de livraison (Delivery Ratio)', fontsize=14)
+        axes[0, 0].set_xlabel('L (nombre initial de copies)', fontsize=12)
+        axes[0, 0].set_ylabel('DR = messages livrés/émis', fontsize=12)
+        axes[0, 0].set_ylim([0, 1.1])
         axes[0, 0].grid(True, alpha=0.3)
+        axes[0, 0].legend(fontsize=12)
         
-        # 2. Nombre de copies totales vs L
-        axes[0, 1].bar(df_results['L'].astype(str), df_results['total_copies'])
-        axes[0, 1].set_title('Total des copies créées')
-        axes[0, 1].set_xlabel('L (nombre initial de copies)')
-        axes[0, 1].set_ylabel('Nombre de copies')
+        axes[0, 1].set_title('Délai moyen de livraison', fontsize=14)
+        axes[0, 1].set_xlabel('L (nombre initial de copies)', fontsize=12)
+        axes[0, 1].set_ylabel('Délai (unités de temps)', fontsize=12)
         axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].legend(fontsize=12)
         
-        # 3. Nombre de sauts maximum vs L
-        axes[1, 0].bar(df_results['L'].astype(str), df_results['max_hops'])
-        axes[1, 0].set_title('Nombre maximum de sauts')
-        axes[1, 0].set_xlabel('L (nombre initial de copies)')
-        axes[1, 0].set_ylabel('Sauts')
+        axes[1, 0].set_title('Surcharge de copies (Overhead Ratio)', fontsize=14)
+        axes[1, 0].set_xlabel('L (nombre initial de copies)', fontsize=12)
+        axes[1, 0].set_ylabel('OH = copies créées/messages livrés', fontsize=12)
         axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].legend(fontsize=12)
         
-        # 4. Nombre de sauts pour atteindre la destination vs L
-        # Convertir la colonne en numérique si possible
-        df_results['destination_hops_num'] = pd.to_numeric(df_results['destination_hops'], errors='coerce')
-        axes[1, 1].bar(df_results['L'].astype(str), df_results['destination_hops_num'])
-        axes[1, 1].set_title('Sauts pour atteindre la destination')
-        axes[1, 1].set_xlabel('L (nombre initial de copies)')
-        axes[1, 1].set_ylabel('Sauts')
+        axes[1, 1].set_title('Nombre moyen de sauts (Hop Count)', fontsize=14)
+        axes[1, 1].set_xlabel('L (nombre initial de copies)', fontsize=12)
+        axes[1, 1].set_ylabel('Nombre de sauts', fontsize=12)
         axes[1, 1].grid(True, alpha=0.3)
+        axes[1, 1].legend(fontsize=12)
         
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/comparaison_multihop.png", dpi=300)
-        print(f"Graphique comparatif sauvegardé dans {output_dir}/comparaison_multihop.png")
+        plt.savefig(f"{main_output_dir}/comparaison_tous_modes.png", dpi=300)
+        print(f"Graphique comparatif global sauvegardé dans {main_output_dir}/comparaison_tous_modes.png")
 
 if __name__ == "__main__":
     test_spray_and_wait_multihop()
